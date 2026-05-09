@@ -1,0 +1,2 @@
+# One job URL per line
+# https://careers.example.com/jobs/12345

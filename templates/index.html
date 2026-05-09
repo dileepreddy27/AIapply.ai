@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AIapply.ai</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="ambient ambient-a"></div>
+  <div class="ambient ambient-b"></div>
+  <main class="shell">
+    <section class="hero">
+      <p class="eyebrow">AIapply.ai</p>
+      <h1>Resume-Aware Job Matching With RAG</h1>
+      <p>
+        Upload your resume, choose your target role, and get role-specific opportunities.
+        Software Engineer users see software roles, Nurses see nursing roles, and custom roles are supported.
+      </p>
+    </section>
+
+    <section class="panel">
+      <form action="/match" method="post" enctype="multipart/form-data" class="form-grid">
+        <label class="field">
+          <span>Resume (PDF, DOCX, TXT, MD)</span>
+          <input type="file" name="resume_file" accept=".pdf,.docx,.txt,.md" required />
+        </label>
+
+        <label class="field">
+          <span>Target Role</span>
+          <select name="role" id="role-select">
+            {% for value, label in roles %}
+            <option value="{{ value }}" {% if selected_role == value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+
+        <label class="field">
+          <span>Custom Role (optional)</span>
+          <input type="text" name="custom_role" value="{{ custom_role }}" placeholder="Ex: DevOps Engineer or Pediatric Nurse" />
+        </label>
+
+        <label class="field small">
+          <span>Top Results</span>
+          <input type="number" min="1" max="50" name="top_k" value="{{ top_k }}" />
+        </label>
+
+        <label class="field small">
+          <span>Min Match Score (0 to 5)</span>
+          <input type="number" step="0.1" min="0" max="5" name="min_score" value="{{ min_score }}" />
+        </label>
+
+        <button type="submit" class="cta">Match Jobs</button>
+      </form>
+      <p class="message">{{ message }}</p>
+      {% if resume_keywords %}
+      <div class="keywords">
+        {% for kw in resume_keywords %}
+        <span>{{ kw }}</span>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </section>
+
+    <section class="results">
+      {% if results %}
+      {% for item in results %}
+      <article class="job-card">
+        <div class="job-top">
+          <h2>{{ item.title }}</h2>
+          <p class="meta">{{ item.company }} · {{ item.location }}</p>
+          <p class="meta">Source: {{ item.source }}</p>
+        </div>
+        <div class="score-row">
+          <span>RAG: {{ item.rag_score }}/5</span>
+          <span>Final: {{ item.final_score }}/5</span>
+        </div>
+        <p class="explain">{{ item.explanation }}</p>
+        {% if item.overlap_terms %}
+        <div class="keywords">
+          {% for kw in item.overlap_terms %}
+          <span>{{ kw }}</span>
+          {% endfor %}
+        </div>
+        {% endif %}
+        <a href="{{ item.url }}" target="_blank" rel="noreferrer">Open Job</a>
+      </article>
+      {% endfor %}
+      {% else %}
+      <article class="empty-state">
+        <h2>No results yet</h2>
+        <p>Upload resume and run matching to see personalized jobs.</p>
+      </article>
+      {% endif %}
+    </section>
+  </main>
+</body>
+</html>

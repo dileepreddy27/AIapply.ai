@@ -1,0 +1,14 @@
+.venv/
+.playwright/
+__pycache__/
+*.pyc
+.env
+frontend/.env.local
+frontend/node_modules/
+frontend/.next/
+config/profile.yml
+config/sources.yml
+data/jobs.jsonl
+data/pipeline.csv
+data/browser_state.json
+logs/

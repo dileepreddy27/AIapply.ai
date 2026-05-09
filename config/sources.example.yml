@@ -1,0 +1,17 @@
+greenhouse:
+  boards:
+    - "openai"
+    - "anthropic"
+
+lever:
+  sites:
+    - "lever"
+
+manual:
+  job_urls_file: "./data/seeds/job_urls.txt"
+
+linkedin:
+  imports_csv: "./data/imports/linkedin_jobs.csv"
+
+indeed:
+  imports_csv: "./data/imports/indeed_jobs.csv"

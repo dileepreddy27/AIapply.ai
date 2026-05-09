@@ -1,0 +1,25 @@
+name: "Your Full Name"
+email: "you@example.com"
+phone: "+1-555-555-5555"
+location: "New York, NY"
+target_roles:
+  - "Machine Learning Engineer"
+  - "Applied AI Engineer"
+skills:
+  - "Python"
+  - "LLM"
+  - "RAG"
+  - "MLOps"
+keywords:
+  - "agentic"
+  - "prompt engineering"
+  - "model evaluation"
+narrative: "I build production AI systems that improve business outcomes."
+experience_years: 5
+links:
+  linkedin: "https://www.linkedin.com/in/your-handle"
+  github: "https://github.com/your-handle"
+  portfolio: "https://your-portfolio.dev"
+assets:
+  resume_path: "./assets/resume.pdf"
+  cover_letter_path: "./assets/cover_letter.pdf"
