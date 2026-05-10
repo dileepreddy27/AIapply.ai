@@ -1099,14 +1099,6 @@ export default function DashboardPage() {
           </article>
         </section>
 
-        <section className="workflow-strip">
-          <button type="button" className={`workflow-chip${activeStep === "profile" ? " active" : ""}`} onClick={() => setActiveStep("profile")}>1. Profile</button>
-          <button type="button" className={`workflow-chip${activeStep === "matched_jobs" ? " active" : ""}`} onClick={() => setActiveStep("matched_jobs")}>2. Matching Jobs</button>
-          <button type="button" className={`workflow-chip${activeStep === "bookmarks" ? " active" : ""}`} onClick={() => setActiveStep("bookmarks")}>3. Bookmarks</button>
-          <button type="button" className={`workflow-chip${activeStep === "auto_apply" ? " active" : ""}`} onClick={() => setActiveStep("auto_apply")}>4. Auto Apply</button>
-          <button type="button" className={`workflow-chip${activeStep === "analytics" ? " active" : ""}`} onClick={() => setActiveStep("analytics")}>5. Analytics</button>
-        </section>
-
         <section className="dashboard-grid">
           <article
             className="dashboard-card dashboard-card-wide"
