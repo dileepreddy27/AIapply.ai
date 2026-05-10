@@ -868,6 +868,46 @@ button:disabled {
   font-weight: 700;
 }
 
+
+.filter-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.85rem;
+  margin: 0.25rem 0 1rem;
+}
+
+.compact-filter {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 220px;
+}
+
+.compact-filter select {
+  width: 100%;
+}
+
+.source-diagnostics {
+  margin-bottom: 1rem;
+  padding: 0.85rem 0.95rem;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.bookmark-list {
+  margin-top: 1rem;
+}
+
+.bookmark-card {
+  gap: 0.6rem;
+}
+
+.bookmark-url {
+  word-break: break-all;
+  font-family: "IBM Plex Mono", monospace;
+  color: var(--ink-soft);
+}
+
 @media (max-width: 820px) {
   .app-shell {
     grid-template-columns: 1fr;

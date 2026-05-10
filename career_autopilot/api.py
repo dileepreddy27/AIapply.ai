@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import csv
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from io import BytesIO, StringIO
 import os
@@ -115,6 +115,14 @@ def _load_import_jobs(path: Path, source: str) -> list[JobPosting]:
             url = (row.get("url") or "").strip()
             if not url:
                 continue
+            posted_at = (
+                row.get("posted_at")
+                or row.get("date_posted")
+                or row.get("listed_at")
+                or row.get("created_at")
+                or row.get("updated_at")
+                or ""
+            )
             out.append(
                 JobPosting(
                     id=f"{source}:{url}",
@@ -124,6 +132,7 @@ def _load_import_jobs(path: Path, source: str) -> list[JobPosting]:
                     location=(row.get("location") or "").strip() or "Unknown Location",
                     url=url,
                     description=(row.get("description") or "").strip(),
+                    posted_at=str(posted_at).strip(),
                 )
             )
     return out
@@ -159,7 +168,7 @@ def _dedupe_jobs(jobs: list[JobPosting]) -> list[JobPosting]:
     return list(by_url.values())
 
 
-def _discover_live_jobs_with_diagnostics(query: str, limit: int = 250) -> tuple[list[JobPosting], dict[str, Any]]:
+def _discover_live_jobs_with_diagnostics(query: str, limit: int = 600) -> tuple[list[JobPosting], dict[str, Any]]:
     jobs: list[JobPosting] = []
     diagnostics: dict[str, Any] = {
         "imports_loaded": 0,
@@ -222,7 +231,7 @@ def _discover_live_jobs_with_diagnostics(query: str, limit: int = 250) -> tuple[
     return selected[:limit], diagnostics
 
 
-def _discover_live_jobs(query: str, limit: int = 250) -> list[JobPosting]:
+def _discover_live_jobs(query: str, limit: int = 600) -> list[JobPosting]:
     jobs, _ = _discover_live_jobs_with_diagnostics(query, limit=limit)
     return jobs
 
@@ -450,6 +459,38 @@ def _extract_resume_text(filename: str, payload: bytes) -> str:
     raise ValueError("Unsupported file. Use PDF, DOCX, TXT, or MD.")
 
 
+def _parse_iso_datetime(raw: str) -> datetime | None:
+    value = str(raw or "").strip()
+    if not value:
+        return None
+    normalized = value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except Exception:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _posted_relative_label(raw: str) -> tuple[str, str, int | None]:
+    parsed = _parse_iso_datetime(raw)
+    if parsed is None:
+        return "", "unknown", None
+    delta = max(datetime.now(timezone.utc) - parsed, timedelta(0))
+    days = delta.days
+    if delta < timedelta(days=1):
+        hours = max(1, int(delta.total_seconds() // 3600) or 0)
+        return ("Today" if hours <= 6 else f"{hours} hours ago"), "past_24_hours", 0
+    if days < 7:
+        return ("1 day ago" if days == 1 else f"{days} days ago"), "past_week", days
+    if days < 30:
+        weeks = max(1, round(days / 7))
+        return ("1 week ago" if weeks == 1 else f"{weeks} weeks ago"), "past_month", days
+    months = max(1, round(days / 30))
+    return ("1 month ago" if months == 1 else f"{months} months ago"), "older", days
+
+
 def _results_to_cards(results: list[MatchResult], min_score: float) -> list[dict[str, Any]]:
     cards: list[dict[str, Any]] = []
     for result in results:
@@ -468,6 +509,8 @@ def _results_to_cards(results: list[MatchResult], min_score: float) -> list[dict
                 )
             )
         )
+        posted_raw = result.job.posted_at or result.job.discovered_at
+        posted_relative, posted_bucket, posted_days_ago = _posted_relative_label(posted_raw)
         cards.append(
             {
                 "title": result.job.title,
@@ -480,6 +523,10 @@ def _results_to_cards(results: list[MatchResult], min_score: float) -> list[dict
                 "ats_score": ats_score,
                 "overlap_terms": result.overlap_terms,
                 "explanation": result.explanation,
+                "posted_at": posted_raw,
+                "posted_relative": posted_relative,
+                "posted_bucket": posted_bucket,
+                "posted_days_ago": posted_days_ago,
             }
         )
     return cards
@@ -586,8 +633,9 @@ class ProfileUpsertRequest(BaseModel):
     company_ranking_filter: str = "any"
     companies_to_avoid: str = ""
     max_applications_per_day: int = 10
-    minimum_match_score: float = 80.0
+    minimum_match_score: float = 30.0
     application_summary: str = ""
+    bookmarks: list[dict[str, Any]] = []
     sub_profiles: list[dict[str, Any]] = []
     active_sub_profile_id: str = ""
 
@@ -791,7 +839,7 @@ def _run_auto_apply_for_profile(
     avoid_text = str(app_profile.get("companies_to_avoid", "") or "")
     avoid_companies = {x.strip().lower() for x in avoid_text.split(",") if x.strip()}
     require_approval = bool(app_profile.get("require_approval_before_apply", True))
-    minimum_match_score = float(app_profile.get("minimum_match_score", 80.0) or 80.0)
+    minimum_match_score = float(app_profile.get("minimum_match_score", 30.0) or 30.0)
 
     jobs = _discover_live_jobs(role_query, limit=160)
     matched = [j for j in jobs if _text_matches_query(j, role_query)]
@@ -931,6 +979,7 @@ def upsert_profile(
             "max_applications_per_day": body.max_applications_per_day,
             "minimum_match_score": body.minimum_match_score,
             "summary": body.application_summary,
+            "bookmarks": body.bookmarks,
             "sub_profiles": sub_profiles,
             "active_sub_profile_id": body.active_sub_profile_id,
         },
@@ -1212,7 +1261,7 @@ async def rag_match(
     query_role = (custom_role.strip() if role == "custom" else role.strip()) or role
 
     jobs: list[JobPosting] = load_jobs(DEFAULT_JOBS_FILE)
-    live_jobs, discovery_diagnostics = _discover_live_jobs_with_diagnostics(query_role, limit=400)
+    live_jobs, discovery_diagnostics = _discover_live_jobs_with_diagnostics(query_role, limit=800)
     if live_jobs:
         jobs = _dedupe_jobs([*jobs, *live_jobs])
     if not jobs:
@@ -1252,7 +1301,7 @@ async def rag_match(
         resume_text=combined_resume_context,
         selected_role=role,
         custom_role=custom_role,
-        top_k=max(1, min(top_k, 50)),
+        top_k=max(1, min(top_k, 80)),
         sector=selected_sector,
     )
     strict_threshold = min_score / 5.0

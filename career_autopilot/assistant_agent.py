@@ -80,6 +80,16 @@ def build_profile_summary(profile: dict[str, Any] | None) -> str:
     if not profile:
         return "No saved user profile was found."
     app = profile.get("application_profile") or {}
+    sub_profiles = app.get("sub_profiles") or []
+    bookmarks = app.get("bookmarks") or []
+    bookmark_summary = ", ".join(
+        str(item.get("company", "")).strip() for item in bookmarks[:8] if str(item.get("company", "")).strip()
+    )
+    sub_profile_summary = "; ".join(
+        f"{item.get('name', 'Sub profile')}: {item.get('target_role', '')}"
+        for item in sub_profiles[:6]
+        if isinstance(item, dict) and (item.get('name') or item.get('target_role'))
+    )
     parts = [
         f"Full name: {profile.get('full_name', '')}",
         f"Target role: {profile.get('target_role', '')}",
@@ -91,6 +101,10 @@ def build_profile_summary(profile: dict[str, Any] | None) -> str:
         f"Preferred locations: {app.get('preferred_locations', '')}",
         f"Work preferences: {', '.join(app.get('work_preferences', []) or [])}",
         f"Salary expectation: {app.get('salary_expectation', '')}",
+        f"Automation enabled: {bool(app.get('auto_apply_enabled'))}",
+        f"Approval required: {bool(app.get('require_approval_before_apply', True))}",
+        f"Bookmarks: {bookmark_summary}",
+        f"Sub profiles: {sub_profile_summary}",
         f"Summary: {app.get('summary', '')}",
     ]
     return "\n".join(part for part in parts if part and not part.endswith(": "))

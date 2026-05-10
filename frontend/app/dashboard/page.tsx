@@ -15,6 +15,34 @@ type MatchResult = {
   ats_score: number;
   overlap_terms: string[];
   explanation: string;
+  posted_at?: string;
+  posted_relative?: string;
+  posted_bucket?: string;
+  posted_days_ago?: number | null;
+};
+
+type BookmarkEntry = {
+  id: string;
+  company: string;
+  website: string;
+  note?: string;
+  created_at: string;
+};
+
+type DiscoverySourceCount = {
+  source: string;
+  token: string;
+  jobs: number;
+};
+
+type DiscoveryDiagnostics = {
+  imports_loaded: number;
+  sources_checked: number;
+  sources_succeeded: number;
+  scanned_jobs?: number;
+  query_filtered_jobs?: number;
+  source_counts: DiscoverySourceCount[];
+  source_errors: string[];
 };
 
 type SubProfile = {
@@ -108,7 +136,13 @@ type AssistantMessage = {
   created_at: string;
 };
 
-type DashboardStep = "profile" | "matched_jobs" | "auto_apply" | "analytics";
+type PersistProfileOptions = {
+  advanceStep?: DashboardStep | null;
+  silent?: boolean;
+  successMessage?: string | null;
+};
+
+type DashboardStep = "profile" | "matched_jobs" | "bookmarks" | "auto_apply" | "analytics";
 
 function cleanPriceId(raw: string): string {
   return raw
@@ -180,14 +214,21 @@ export default function DashboardPage() {
   const [companyRankingFilter, setCompanyRankingFilter] = useState("any");
   const [companiesToAvoid, setCompaniesToAvoid] = useState("");
   const [maxApplicationsPerDay, setMaxApplicationsPerDay] = useState("10");
-  const [minimumMatchScore, setMinimumMatchScore] = useState("80");
+  const [minimumMatchScore, setMinimumMatchScore] = useState("30");
   const [subProfiles, setSubProfiles] = useState<SubProfile[]>([]);
   const [activeSubProfileId, setActiveSubProfileId] = useState("");
   const [subProfileName, setSubProfileName] = useState("");
   const [subProfileKpiFocus, setSubProfileKpiFocus] = useState("");
+  const [bookmarks, setBookmarks] = useState<BookmarkEntry[]>([]);
+  const [bookmarkCompany, setBookmarkCompany] = useState("");
+  const [bookmarkWebsite, setBookmarkWebsite] = useState("");
+  const [bookmarkNote, setBookmarkNote] = useState("");
 
   const [resumeFile, setResumeFile] = useState<File | null>(null);
   const [results, setResults] = useState<MatchResult[]>([]);
+  const [discoveryDiagnostics, setDiscoveryDiagnostics] = useState<DiscoveryDiagnostics | null>(null);
+  const [postedWindow, setPostedWindow] = useState("all");
+  const [sourceFilter, setSourceFilter] = useState("all");
   const [roleSuggestions, setRoleSuggestions] = useState<string[]>([]);
   const [roleInputDirty, setRoleInputDirty] = useState(false);
   const [profileOptions, setProfileOptions] = useState<ProfileOptions>({
@@ -224,7 +265,28 @@ export default function DashboardPage() {
   const testingPremiumMode = subscription.testing_mode || subscription.status === "testing";
   const autoApplyLocked = !testingPremiumMode && !subscription.features.can_auto_apply;
   const recentApplications = useMemo(() => applications.slice(0, 6), [applications]);
-  const topResults = useMemo(() => results.slice(0, 6), [results]);
+  const recentBookmarks = useMemo(() => bookmarks.slice(0, 8), [bookmarks]);
+  const sourceOptions = useMemo(() => {
+    const seen = new Set<string>();
+    return results
+      .map((item) => item.source)
+      .filter((item) => {
+        if (!item || seen.has(item)) return false;
+        seen.add(item);
+        return true;
+      })
+      .sort();
+  }, [results]);
+  const filteredResults = useMemo(() => {
+    return results.filter((item) => {
+      if (sourceFilter !== "all" && item.source !== sourceFilter) return false;
+      if (postedWindow === "24h") return item.posted_bucket === "past_24_hours";
+      if (postedWindow === "7d") return item.posted_bucket === "past_24_hours" || item.posted_bucket === "past_week";
+      if (postedWindow === "30d") return item.posted_bucket !== "older" && item.posted_bucket !== "unknown";
+      if (postedWindow === "older") return item.posted_bucket === "older";
+      return true;
+    });
+  }, [postedWindow, results, sourceFilter]);
   const sourceMix = useMemo(() => {
     const counts = new Map<string, number>();
     results.forEach((item) => {
@@ -355,6 +417,7 @@ export default function DashboardPage() {
     const targetMap: Record<DashboardStep, string> = {
       profile: "profile",
       matched_jobs: "results",
+      bookmarks: "bookmarks",
       auto_apply: "automation",
       analytics: "analytics"
     };
@@ -560,7 +623,8 @@ export default function DashboardPage() {
       setCompanyRankingFilter(app.company_ranking_filter ?? "any");
       setCompaniesToAvoid(app.companies_to_avoid ?? "");
       setMaxApplicationsPerDay(String(app.max_applications_per_day ?? 10));
-      setMinimumMatchScore(String(app.minimum_match_score ?? 80));
+      setMinimumMatchScore(String(app.minimum_match_score ?? 30));
+      setBookmarks(Array.isArray(app.bookmarks) ? app.bookmarks : []);
       setSubProfiles(Array.isArray(app.sub_profiles) ? app.sub_profiles : []);
       setActiveSubProfileId(app.active_sub_profile_id ?? "");
     } catch (err) {
@@ -604,52 +668,61 @@ export default function DashboardPage() {
     }
   }
 
-  async function saveProfile(): Promise<void> {
-    if (!isBackendConfigured()) {
-      setMessage(backendConfigMessage());
-      return;
-    }
-    try {
-      const skills = skillsText
+  function buildProfilePayload(overrides: Partial<Record<string, unknown>> = {}): Record<string, unknown> {
+    const skills = skillsText
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    return {
+      work_preferences: workPreferences
         .split(",")
         .map((s) => s.trim())
-        .filter(Boolean);
-      const payload = {
-        work_preferences: workPreferences
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean),
-        full_name: fullName,
-        target_role: targetRole,
-        skills,
-        experience_level: experienceLevel,
-        target_sector: targetSector,
-        phone,
-        location,
-        country,
-        region,
-        linkedin_url: linkedinUrl,
-        portfolio_url: portfolioUrl,
-        work_authorization_status: workAuthorizationStatus,
-        needs_sponsorship: needsSponsorship,
-        veteran_status: veteranStatus,
-        race_ethnicity: raceEthnicity,
-        gender_identity: genderIdentity,
-        disability_status: disabilityStatus,
-        preferred_locations: preferredLocations,
-        willing_to_relocate: willingToRelocate,
-        salary_expectation: salaryExpectation,
-        auto_apply_enabled: autoApplyEnabled,
-        auto_apply_consent: autoApplyEnabled ? autoApplyConsent : false,
-        require_approval_before_apply: autoApplyEnabled ? requireApprovalBeforeApply : false,
-        company_ranking_filter: companyRankingFilter,
-        companies_to_avoid: companiesToAvoid,
-        max_applications_per_day: Number(maxApplicationsPerDay || "10"),
-        minimum_match_score: Number(minimumMatchScore || "80"),
-        application_summary: applicationSummary,
-        sub_profiles: subProfiles,
-        active_sub_profile_id: activeSubProfileId
-      };
+        .filter(Boolean),
+      full_name: fullName,
+      target_role: targetRole,
+      skills,
+      experience_level: experienceLevel,
+      target_sector: targetSector,
+      phone,
+      location,
+      country,
+      region,
+      linkedin_url: linkedinUrl,
+      portfolio_url: portfolioUrl,
+      work_authorization_status: workAuthorizationStatus,
+      needs_sponsorship: needsSponsorship,
+      veteran_status: veteranStatus,
+      race_ethnicity: raceEthnicity,
+      gender_identity: genderIdentity,
+      disability_status: disabilityStatus,
+      preferred_locations: preferredLocations,
+      willing_to_relocate: willingToRelocate,
+      salary_expectation: salaryExpectation,
+      auto_apply_enabled: autoApplyEnabled,
+      auto_apply_consent: autoApplyEnabled ? autoApplyConsent : false,
+      require_approval_before_apply: autoApplyEnabled ? requireApprovalBeforeApply : false,
+      company_ranking_filter: companyRankingFilter,
+      companies_to_avoid: companiesToAvoid,
+      max_applications_per_day: Number(maxApplicationsPerDay || "10"),
+      minimum_match_score: Number(minimumMatchScore || "30"),
+      application_summary: applicationSummary,
+      bookmarks,
+      sub_profiles: subProfiles,
+      active_sub_profile_id: activeSubProfileId,
+      ...overrides
+    };
+  }
+
+  async function persistProfile(
+    payload: Record<string, unknown>,
+    options: PersistProfileOptions = {}
+  ): Promise<boolean> {
+    if (!isBackendConfigured()) {
+      setMessage(backendConfigMessage());
+      return false;
+    }
+    const { advanceStep = "matched_jobs", silent = false, successMessage = "Profile saved." } = options;
+    try {
       const res = await authFetch(`${backendUrl}/api/profile/upsert`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -660,17 +733,102 @@ export default function DashboardPage() {
       if (data?.subscription) {
         setSubscription(data.subscription);
       }
-      setActiveStep("matched_jobs");
-      setMessage("Profile saved.");
-    } catch (err) {
-      const text = err instanceof Error ? err.message : "Profile update failed.";
-      if (text === "Failed to fetch") {
-        setMessage(
-          "Failed to fetch backend. Check NEXT_PUBLIC_BACKEND_URL and Render CORS settings."
-        );
-        return;
+      if (advanceStep) {
+        setActiveStep(advanceStep);
       }
-      setMessage(text);
+      if (!silent && successMessage) {
+        setMessage(successMessage);
+      }
+      return true;
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : "Profile update failed.";
+      if (detail === "Failed to fetch") {
+        setMessage("Failed to fetch backend. Check NEXT_PUBLIC_BACKEND_URL and Render CORS settings.");
+      } else {
+        setMessage(detail);
+      }
+      return false;
+    }
+  }
+
+  async function saveProfile(options: PersistProfileOptions = {}): Promise<boolean> {
+    return persistProfile(buildProfilePayload(), options);
+  }
+
+  function createBookmarkId(companyValue: string, websiteValue: string): string {
+    const cleanCompany = companyValue.trim().toLowerCase();
+    const cleanWebsite = websiteValue.trim().toLowerCase();
+    if (cleanCompany || cleanWebsite) {
+      return `${cleanCompany}::${cleanWebsite}`;
+    }
+    return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}`;
+  }
+
+  function normalizeBookmarkWebsite(raw: string): string {
+    const trimmed = raw.trim();
+    if (!trimmed) return "";
+    if (/^https?:\/\//i.test(trimmed)) return trimmed;
+    return `https://${trimmed}`;
+  }
+
+  async function persistBookmarks(nextBookmarks: BookmarkEntry[], successMessage: string): Promise<void> {
+    setBookmarks(nextBookmarks);
+    await persistProfile(buildProfilePayload({ bookmarks: nextBookmarks }), {
+      advanceStep: null,
+      successMessage,
+      silent: false
+    });
+  }
+
+  async function addManualBookmark(): Promise<void> {
+    const companyValue = bookmarkCompany.trim();
+    const websiteValue = normalizeBookmarkWebsite(bookmarkWebsite);
+    if (!companyValue || !websiteValue) {
+      setMessage("Add both a company name and website before saving a bookmark.");
+      return;
+    }
+    const nextBookmarks = [
+      {
+        id: createBookmarkId(companyValue, websiteValue),
+        company: companyValue,
+        website: websiteValue,
+        note: bookmarkNote.trim(),
+        created_at: new Date().toISOString()
+      },
+      ...bookmarks.filter((item) => item.company.toLowerCase() !== companyValue.toLowerCase() || item.website.toLowerCase() !== websiteValue.toLowerCase())
+    ];
+    setBookmarkCompany("");
+    setBookmarkWebsite("");
+    setBookmarkNote("");
+    await persistBookmarks(nextBookmarks, `${companyValue} saved to bookmarks.`);
+  }
+
+  async function bookmarkJob(job: MatchResult): Promise<void> {
+    const websiteValue = normalizeBookmarkWebsite(job.url);
+    const nextBookmarks = [
+      {
+        id: createBookmarkId(job.company, websiteValue),
+        company: job.company,
+        website: websiteValue,
+        note: `${job.title} | ${job.source}${job.posted_relative ? ` | Posted ${job.posted_relative}` : ""}`,
+        created_at: new Date().toISOString()
+      },
+      ...bookmarks.filter((item) => item.company.toLowerCase() !== job.company.toLowerCase() || item.website.toLowerCase() !== websiteValue.toLowerCase())
+    ];
+    await persistBookmarks(nextBookmarks, `${job.company} saved to bookmarks.`);
+  }
+
+  async function removeBookmark(bookmarkId: string): Promise<void> {
+    const nextBookmarks = bookmarks.filter((item) => item.id !== bookmarkId);
+    await persistBookmarks(nextBookmarks, "Bookmark removed.");
+  }
+
+  async function copyBookmarkWebsite(website: string): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(website);
+      setMessage("Bookmark website copied.");
+    } catch {
+      setMessage("Could not copy the bookmark website from this browser.");
     }
   }
 
@@ -679,16 +837,22 @@ export default function DashboardPage() {
       setMessage(backendConfigMessage());
       return;
     }
-    if (!resumeFile) return;
+    if (!resumeFile) {
+      setMessage("Upload a resume before running job matching.");
+      return;
+    }
+    const saved = await saveProfile({ advanceStep: null, silent: true, successMessage: null });
+    if (!saved) return;
     setMessage("Matching jobs...");
     setResults([]);
+    setDiscoveryDiagnostics(null);
     try {
       const formData = new FormData();
       formData.set("resume_file", resumeFile);
       formData.set("role", "custom");
       formData.set("custom_role", targetRole);
-      formData.set("top_k", "20");
-      formData.set("min_score", "1.5");
+      formData.set("top_k", "50");
+      formData.set("min_score", "1.2");
 
       const res = await authFetch(`${backendUrl}/api/rag/match`, {
         method: "POST",
@@ -697,20 +861,21 @@ export default function DashboardPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data?.detail ?? "Match request failed.");
       setResults(data.results ?? []);
+      setDiscoveryDiagnostics(data.source_diagnostics ?? null);
+      setPostedWindow("all");
+      setSourceFilter("all");
       setActiveStep("matched_jobs");
       setMessage(
         data?.message ??
           `Found ${data.count ?? 0} matching jobs from ${data.scanned_jobs ?? 0} scanned openings.`
       );
     } catch (err) {
-      const text = err instanceof Error ? err.message : "Failed to match jobs.";
-      if (text === "Failed to fetch") {
-        setMessage(
-          "Failed to fetch backend. Check NEXT_PUBLIC_BACKEND_URL and Render CORS settings."
-        );
+      const detail = err instanceof Error ? err.message : "Failed to match jobs.";
+      if (detail === "Failed to fetch") {
+        setMessage("Failed to fetch backend. Check NEXT_PUBLIC_BACKEND_URL and Render CORS settings.");
         return;
       }
-      setMessage(text);
+      setMessage(detail);
     }
   }
 
@@ -727,11 +892,13 @@ export default function DashboardPage() {
       setMessage("Enable Auto Apply and consent before running auto apply.");
       return;
     }
+    const saved = await saveProfile({ advanceStep: null, silent: true, successMessage: null });
+    if (!saved) return;
     try {
       const res = await authFetch(`${backendUrl}/api/auto-apply/run`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ role: "custom", custom_role: targetRole, max_jobs: 10 })
+        body: JSON.stringify({ role: "custom", custom_role: targetRole, max_jobs: 12 })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.detail ?? "Auto Apply failed.");
@@ -744,12 +911,13 @@ export default function DashboardPage() {
           `Auto Apply completed. Matched ${data.matched_jobs}, queued ${data.queued_applications}.`
       );
     } catch (err) {
-      const text = err instanceof Error ? err.message : "Auto Apply failed.";
-      setMessage(text);
+      const detail = err instanceof Error ? err.message : "Auto Apply failed.";
+      setMessage(detail);
     }
   }
 
   async function startCheckout(): Promise<void> {
+
     if (!isBackendConfigured()) {
       setMessage(backendConfigMessage());
       return;
@@ -878,6 +1046,7 @@ export default function DashboardPage() {
         <nav className="sidebar-nav" aria-label="Dashboard sections">
           <button type="button" className={`sidebar-link${activeStep === "profile" ? " active" : ""}`} onClick={() => setActiveStep("profile")}>Profile</button>
           <button type="button" className={`sidebar-link${activeStep === "matched_jobs" ? " active" : ""}`} onClick={() => setActiveStep("matched_jobs")}>Matched Jobs</button>
+          <button type="button" className={`sidebar-link${activeStep === "bookmarks" ? " active" : ""}`} onClick={() => setActiveStep("bookmarks")}>Bookmarks</button>
           <button type="button" className={`sidebar-link${activeStep === "auto_apply" ? " active" : ""}`} onClick={() => setActiveStep("auto_apply")}>Auto Apply</button>
           <button type="button" className={`sidebar-link${activeStep === "analytics" ? " active" : ""}`} onClick={() => setActiveStep("analytics")}>Analytics</button>
         </nav>
@@ -903,10 +1072,6 @@ export default function DashboardPage() {
               Resume-first matching, controlled automation, and a corner assistant for fast help.
             </p>
           </div>
-          <div className="dashboard-topbar-meta">
-            <span className="topbar-chip">{subProfileName || targetRole || "Target role pending"}</span>
-            <span className="topbar-chip">{testingPremiumMode ? "Testing unlock active" : (country || "Global search")}</span>
-          </div>
         </header>
 
         {message && <div className="status-banner">{message}</div>}
@@ -928,17 +1093,18 @@ export default function DashboardPage() {
             <span>{queuePendingCount} waiting review · {queueReadyCount} ready</span>
           </article>
           <article className="metric-card">
-            <p className="metric-label">Assistant Access</p>
-            <strong>{subscription.label}</strong>
-            <span>{assistantUsageLabel}</span>
+            <p className="metric-label">Bookmarks</p>
+            <strong>{bookmarks.length}</strong>
+            <span>Saved company targets for later review</span>
           </article>
         </section>
 
         <section className="workflow-strip">
           <button type="button" className={`workflow-chip${activeStep === "profile" ? " active" : ""}`} onClick={() => setActiveStep("profile")}>1. Profile</button>
           <button type="button" className={`workflow-chip${activeStep === "matched_jobs" ? " active" : ""}`} onClick={() => setActiveStep("matched_jobs")}>2. Matching Jobs</button>
-          <button type="button" className={`workflow-chip${activeStep === "auto_apply" ? " active" : ""}`} onClick={() => setActiveStep("auto_apply")}>3. Auto Apply</button>
-          <button type="button" className={`workflow-chip${activeStep === "analytics" ? " active" : ""}`} onClick={() => setActiveStep("analytics")}>4. Analytics</button>
+          <button type="button" className={`workflow-chip${activeStep === "bookmarks" ? " active" : ""}`} onClick={() => setActiveStep("bookmarks")}>3. Bookmarks</button>
+          <button type="button" className={`workflow-chip${activeStep === "auto_apply" ? " active" : ""}`} onClick={() => setActiveStep("auto_apply")}>4. Auto Apply</button>
+          <button type="button" className={`workflow-chip${activeStep === "analytics" ? " active" : ""}`} onClick={() => setActiveStep("analytics")}>5. Analytics</button>
         </section>
 
         <section className="dashboard-grid">
@@ -953,7 +1119,7 @@ export default function DashboardPage() {
                 <h3>Targeting Console</h3>
               </div>
               <div className="inline-actions">
-                <button onClick={saveProfile}>Save Profile</button>
+                <button onClick={() => void saveProfile()}>Save Profile</button>
                 <button onClick={runMatch} disabled={!canRunMatch}>
                   Match Jobs
                 </button>
@@ -1200,7 +1366,7 @@ export default function DashboardPage() {
                 <p className="feature-kicker">Automation</p>
                 <h3>Automation Rules</h3>
               </div>
-              <button onClick={runAutoApply}>
+              <button onClick={runAutoApply} disabled={autoApplyLocked || !autoApplyEnabled || !autoApplyConsent}>
                 Run Auto Apply
               </button>
             </div>
@@ -1301,6 +1467,7 @@ export default function DashboardPage() {
                 <input
                   type="checkbox"
                   checked={autoApplyConsent}
+                  disabled={!autoApplyEnabled}
                   onChange={(e) => setAutoApplyConsent(e.target.checked)}
                 />
               </label>
@@ -1309,6 +1476,7 @@ export default function DashboardPage() {
                 <input
                   type="checkbox"
                   checked={requireApprovalBeforeApply}
+                  disabled={!autoApplyEnabled}
                   onChange={(e) => setRequireApprovalBeforeApply(e.target.checked)}
                 />
               </label>
@@ -1329,25 +1497,133 @@ export default function DashboardPage() {
                 {results.length ? `${results.length} jobs surfaced` : "Upload a resume and run matching"}
               </span>
             </div>
+            <div className="filter-toolbar">
+              <label className="compact-filter">
+                Posted Window
+                <select value={postedWindow} onChange={(e) => setPostedWindow(e.target.value)}>
+                  <option value="all">All postings</option>
+                  <option value="24h">Past 24 hours</option>
+                  <option value="7d">Past week</option>
+                  <option value="30d">Past month</option>
+                  <option value="older">Older than a month</option>
+                </select>
+              </label>
+              <label className="compact-filter">
+                Source
+                <select value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)}>
+                  <option value="all">All sources</option>
+                  {sourceOptions.map((option) => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <div className="queue-stat-row">
+              <span className="topbar-chip">{filteredResults.length} visible</span>
+              <span className="topbar-chip">{results.length} matched</span>
+              <span className="topbar-chip">{discoveryDiagnostics?.scanned_jobs ?? 0} scanned</span>
+              <span className="topbar-chip">{discoveryDiagnostics?.imports_loaded ?? 0} portal imports</span>
+            </div>
+            {discoveryDiagnostics && (
+              <div className="source-diagnostics">
+                <p className="field-hint">
+                  {discoveryDiagnostics.imports_loaded > 0
+                    ? `Imported ${discoveryDiagnostics.imports_loaded} LinkedIn / Indeed / portal rows from data/imports before live ATS search.`
+                    : "LinkedIn, Indeed, and other portal imports are currently empty, so these matches are coming from live Greenhouse and Lever sources."}
+                </p>
+                {discoveryDiagnostics.source_counts.length > 0 && (
+                  <ul className="plain-list">
+                    {discoveryDiagnostics.source_counts.slice(0, 12).map((entry) => (
+                      <li key={`${entry.source}-${entry.token}`}>
+                        <strong>{entry.source}</strong> {entry.token}: {entry.jobs} jobs
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
             <div className="results-stack">
-              {topResults.length === 0 ? (
+              {filteredResults.length === 0 ? (
                 <p className="empty-state">
-                  No matched jobs yet. Save your targeting profile, upload your resume, and run matching.
+                  {results.length === 0
+                    ? "No matched jobs yet. Save your targeting profile, upload your resume, and run matching."
+                    : "No matched jobs fit the current source or posted-time filters yet."}
                 </p>
               ) : (
-                topResults.map((job) => (
+                filteredResults.map((job) => (
                   <article key={job.url} className="job-row-card">
                     <div>
                       <h4>{job.title}</h4>
-                      <p>{job.company} · {job.location} · {job.source}</p>
+                      <p>
+                        {job.company} | {job.location} | {job.source}
+                        {job.posted_relative ? ` | Posted ${job.posted_relative}` : ""}
+                      </p>
                       <p className="field-hint">{job.explanation}</p>
                     </div>
                     <div className="job-row-meta">
                       <span className="topbar-chip">ATS {job.ats_score}%</span>
                       <span className="topbar-chip">Final {job.final_score}/5</span>
                       <span className="status-inline">RAG {job.rag_score}/5</span>
+                      <button type="button" className="ghost" onClick={() => void bookmarkJob(job)}>
+                        Bookmark
+                      </button>
                       <button type="button" className="ghost" onClick={() => setActiveStep("auto_apply")}>
                         Move To Auto Apply
+                      </button>
+                    </div>
+                  </article>
+                ))
+              )}
+            </div>
+          </article>
+
+          <article
+            className="dashboard-card dashboard-card-wide"
+            id="bookmarks"
+            style={activeStep === "bookmarks" ? undefined : { display: "none" }}
+          >
+            <div className="card-header-row">
+              <div>
+                <p className="feature-kicker">Bookmarks</p>
+                <h3>Saved Company Targets</h3>
+              </div>
+              <span className="status-inline">{bookmarks.length} saved companies</span>
+            </div>
+            <div className="dashboard-form-grid">
+              <label>
+                Company Name
+                <input value={bookmarkCompany} onChange={(e) => setBookmarkCompany(e.target.value)} placeholder="Anthropic, Vercel, Stripe" />
+              </label>
+              <label>
+                Company Website
+                <input value={bookmarkWebsite} onChange={(e) => setBookmarkWebsite(e.target.value)} placeholder="company.com/careers" />
+              </label>
+              <label>
+                Note (optional)
+                <input value={bookmarkNote} onChange={(e) => setBookmarkNote(e.target.value)} placeholder="Target for backend, AI, or platform roles" />
+              </label>
+            </div>
+            <div className="inline-actions">
+              <button type="button" onClick={() => void addManualBookmark()}>Save Bookmark</button>
+            </div>
+            <div className="queue-preview-list bookmark-list">
+              {recentBookmarks.length === 0 ? (
+                <p className="empty-state">No bookmarked companies yet. Save companies here or bookmark them from matched jobs.</p>
+              ) : (
+                recentBookmarks.map((bookmark) => (
+                  <article key={bookmark.id} className="queue-preview-card bookmark-card">
+                    <div className="application-topline">
+                      <h4>{bookmark.company}</h4>
+                      <span className="status-inline">Saved {new Date(bookmark.created_at).toLocaleDateString()}</span>
+                    </div>
+                    <p className="bookmark-url">{bookmark.website}</p>
+                    {bookmark.note && <p className="field-hint">{bookmark.note}</p>}
+                    <div className="feature-actions">
+                      <button type="button" className="ghost" onClick={() => void copyBookmarkWebsite(bookmark.website)}>
+                        Copy Website
+                      </button>
+                      <button type="button" className="ghost" onClick={() => void removeBookmark(bookmark.id)}>
+                        Remove
                       </button>
                     </div>
                   </article>

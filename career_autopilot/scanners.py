@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -18,6 +19,29 @@ def _make_id(source: str, url: str) -> str:
     return hashlib.sha1(raw).hexdigest()[:16]
 
 
+def _normalize_timestamp(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (int, float)):
+        seconds = float(value)
+        if seconds > 1_000_000_000_000:
+            seconds /= 1000.0
+        try:
+            return datetime.fromtimestamp(seconds, tz=timezone.utc).isoformat()
+        except Exception:
+            return ""
+    raw = str(value).strip()
+    if not raw:
+        return ""
+    if raw.isdigit():
+        return _normalize_timestamp(int(raw))
+    normalized = raw.replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(normalized).astimezone(timezone.utc).isoformat()
+    except Exception:
+        return raw
+
+
 def _normalize_job(
     source: str,
     url: str,
@@ -25,6 +49,7 @@ def _normalize_job(
     company: str = "",
     location: str = "",
     description: str = "",
+    posted_at: str = "",
 ) -> JobPosting:
     title = title.strip() or "Unknown Role"
     company = company.strip() or "Unknown Company"
@@ -37,6 +62,7 @@ def _normalize_job(
         location=location,
         url=url.strip(),
         description=description.strip(),
+        posted_at=_normalize_timestamp(posted_at),
     )
 
 
@@ -64,6 +90,7 @@ def scan_greenhouse(board_token: str) -> list[JobPosting]:
                 company=board_token,
                 location=str((j.get("location") or {}).get("name", "")),
                 description=str(j.get("content", "")),
+                posted_at=str(j.get("updated_at", "")),
             )
         )
     return [j for j in out if j.url]
@@ -84,6 +111,7 @@ def scan_lever(site: str) -> list[JobPosting]:
                 company=site,
                 location=str(categories.get("location", "")),
                 description=str(j.get("descriptionPlain", "")),
+                posted_at=j.get("createdAt") or j.get("updatedAt") or "",
             )
         )
     return [j for j in out if j.url]
@@ -119,6 +147,14 @@ def scan_import_csv(path: Path, source_name: str) -> list[JobPosting]:
             url = (row.get("url") or "").strip()
             if not url:
                 continue
+            posted_at = (
+                row.get("posted_at")
+                or row.get("date_posted")
+                or row.get("listed_at")
+                or row.get("created_at")
+                or row.get("updated_at")
+                or ""
+            )
             out.append(
                 _normalize_job(
                     source=source_name,
@@ -127,6 +163,7 @@ def scan_import_csv(path: Path, source_name: str) -> list[JobPosting]:
                     company=row.get("company", "") or "",
                     location=row.get("location", "") or "",
                     description=row.get("description", "") or "",
+                    posted_at=str(posted_at),
                 )
             )
     return out
