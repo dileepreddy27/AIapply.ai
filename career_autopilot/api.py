@@ -168,7 +168,12 @@ def _dedupe_jobs(jobs: list[JobPosting]) -> list[JobPosting]:
     return list(by_url.values())
 
 
-def _discover_live_jobs_with_diagnostics(query: str, limit: int = 600) -> tuple[list[JobPosting], dict[str, Any]]:
+def _discover_live_jobs_with_diagnostics(
+    query: str,
+    limit: int = 600,
+    greenhouse_limit: int | None = None,
+    lever_limit: int | None = None,
+) -> tuple[list[JobPosting], dict[str, Any]]:
     jobs: list[JobPosting] = []
     diagnostics: dict[str, Any] = {
         "imports_loaded": 0,
@@ -196,7 +201,10 @@ def _discover_live_jobs_with_diagnostics(query: str, limit: int = 600) -> tuple[
             )
 
     # 2) Public ATS sources (Greenhouse + Lever).
-    for token in _split_env_list("LIVE_GREENHOUSE_BOARDS", DEFAULT_GREENHOUSE_BOARDS):
+    greenhouse_tokens = _split_env_list("LIVE_GREENHOUSE_BOARDS", DEFAULT_GREENHOUSE_BOARDS)
+    if greenhouse_limit is not None and greenhouse_limit > 0:
+        greenhouse_tokens = greenhouse_tokens[:greenhouse_limit]
+    for token in greenhouse_tokens:
         diagnostics["sources_checked"] += 1
         try:
             scanned = scan_greenhouse(token)
@@ -209,7 +217,10 @@ def _discover_live_jobs_with_diagnostics(query: str, limit: int = 600) -> tuple[
             if len(diagnostics["source_errors"]) < 8:
                 diagnostics["source_errors"].append(f"greenhouse:{token}:{exc}")
             continue
-    for site in _split_env_list("LIVE_LEVER_SITES", DEFAULT_LEVER_SITES):
+    lever_sites = _split_env_list("LIVE_LEVER_SITES", DEFAULT_LEVER_SITES)
+    if lever_limit is not None and lever_limit > 0:
+        lever_sites = lever_sites[:lever_limit]
+    for site in lever_sites:
         diagnostics["sources_checked"] += 1
         try:
             scanned = scan_lever(site)
@@ -231,8 +242,18 @@ def _discover_live_jobs_with_diagnostics(query: str, limit: int = 600) -> tuple[
     return selected[:limit], diagnostics
 
 
-def _discover_live_jobs(query: str, limit: int = 600) -> list[JobPosting]:
-    jobs, _ = _discover_live_jobs_with_diagnostics(query, limit=limit)
+def _discover_live_jobs(
+    query: str,
+    limit: int = 600,
+    greenhouse_limit: int | None = None,
+    lever_limit: int | None = None,
+) -> list[JobPosting]:
+    jobs, _ = _discover_live_jobs_with_diagnostics(
+        query,
+        limit=limit,
+        greenhouse_limit=greenhouse_limit,
+        lever_limit=lever_limit,
+    )
     return jobs
 
 
@@ -841,7 +862,7 @@ def _run_auto_apply_for_profile(
     require_approval = bool(app_profile.get("require_approval_before_apply", True))
     minimum_match_score = float(app_profile.get("minimum_match_score", 30.0) or 30.0)
 
-    jobs = _discover_live_jobs(role_query, limit=160)
+    jobs = _discover_live_jobs(role_query, limit=160, greenhouse_limit=10, lever_limit=10)
     matched = [j for j in jobs if _text_matches_query(j, role_query)]
     matched = _filter_jobs_by_profile_preferences(matched, app_profile)
     if avoid_companies:
