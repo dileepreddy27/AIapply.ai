@@ -142,6 +142,21 @@ def _extract_anthropic_text(data: dict[str, Any]) -> str:
     return "\n".join(text_parts).strip()
 
 
+def _anthropic_candidate_models() -> list[str]:
+    configured = _clean_env_value(os.getenv("ANTHROPIC_MODEL", ""))
+    defaults = [
+        "claude-sonnet-4-20250514",
+        "claude-sonnet-4-0",
+        "claude-3-7-sonnet-20250219",
+        "claude-3-7-sonnet-latest",
+    ]
+    candidates: list[str] = []
+    for model in [configured, *defaults]:
+        if model and model not in candidates:
+            candidates.append(model)
+    return candidates
+
+
 def _anthropic_error_message(detail_payload: Any, fallback: str) -> str:
     if isinstance(detail_payload, dict):
         error_obj = detail_payload.get("error")
@@ -163,7 +178,6 @@ def run_anthropic_assistant(
     if not api_key:
         raise RuntimeError("Anthropic is not configured. Set ANTHROPIC_API_KEY on the backend.")
 
-    model = _clean_env_value(os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")) or "claude-sonnet-4-20250514"
     safe_user_id = re.sub(r"[^a-zA-Z0-9\-_]", "-", user_id)[:128] or "anonymous-user"
 
     system_prompt = "\n\n".join(
@@ -179,59 +193,69 @@ def run_anthropic_assistant(
     if not conversation:
         raise RuntimeError("Anthropic request could not be built because no assistant input was provided.")
 
-    payload: dict[str, Any] = {
-        "model": model,
-        "max_tokens": 1200,
-        "messages": conversation,
-        "metadata": {"user_id": safe_user_id},
-    }
-    if system_prompt:
-        payload["system"] = system_prompt
+    last_model_error = ""
+    for model in _anthropic_candidate_models():
+        payload: dict[str, Any] = {
+            "model": model,
+            "max_tokens": 1200,
+            "messages": conversation,
+            "metadata": {"user_id": safe_user_id},
+        }
+        if system_prompt:
+            payload["system"] = system_prompt
 
-    response = requests.post(
-        "https://api.anthropic.com/v1/messages",
-        headers={
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-        },
-        json=payload,
-        timeout=60,
-    )
+        response = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json=payload,
+            timeout=60,
+        )
 
-    detail_payload = None
-    try:
-        detail_payload = response.json()
-    except Exception:
         detail_payload = None
+        try:
+            detail_payload = response.json()
+        except Exception:
+            detail_payload = None
 
-    detail_text = _anthropic_error_message(detail_payload, response.text)
-    lowered = detail_text.lower()
+        detail_text = _anthropic_error_message(detail_payload, response.text)
+        lowered = detail_text.lower()
 
-    if response.status_code == 401:
-        raise RuntimeError("Anthropic API key is invalid. Update ANTHROPIC_API_KEY in Render and redeploy.")
-    if response.status_code == 403:
-        raise RuntimeError(
-            "Anthropic returned a permission error for this key or model. Check workspace access and ANTHROPIC_MODEL in Render."
-        )
-    if response.status_code == 429:
-        raise RuntimeError(
-            "Anthropic rate limit or billing limit was reached. Check Anthropic billing and usage, then try again."
-        )
-    if response.status_code == 529:
-        raise RuntimeError("Anthropic is temporarily overloaded. Wait a moment and try the assistant again.")
-    if not response.ok:
-        if "credit balance" in lowered or "insufficient" in lowered or "billing" in lowered:
+        if response.status_code == 401:
+            raise RuntimeError("Anthropic API key is invalid. Update ANTHROPIC_API_KEY in Render and redeploy.")
+        if response.status_code == 403:
             raise RuntimeError(
-                "Anthropic billing is not available for this key right now. Add credit or update the Anthropic account, then retry."
+                "Anthropic returned a permission error for this key or model. Check workspace access and ANTHROPIC_MODEL in Render."
             )
-        raise RuntimeError(f"Anthropic request failed: {detail_text}")
+        if response.status_code == 429:
+            raise RuntimeError(
+                "Anthropic rate limit or billing limit was reached. Check Anthropic billing and usage, then try again."
+            )
+        if response.status_code == 529:
+            raise RuntimeError("Anthropic is temporarily overloaded. Wait a moment and try the assistant again.")
+        if not response.ok:
+            if "credit balance" in lowered or "insufficient" in lowered or "billing" in lowered:
+                raise RuntimeError(
+                    "Anthropic billing is not available for this key right now. Add credit or update the Anthropic account, then retry."
+                )
+            if response.status_code == 400 and ("model" in lowered or "not found" in lowered or "unsupported" in lowered):
+                last_model_error = detail_text
+                continue
+            raise RuntimeError(f"Anthropic request failed: {detail_text}")
 
-    data = detail_payload if isinstance(detail_payload, dict) else response.json()
-    content = _extract_anthropic_text(data)
-    if not content:
-        raise RuntimeError("Anthropic returned an empty assistant response.")
-    return content
+        data = detail_payload if isinstance(detail_payload, dict) else response.json()
+        content = _extract_anthropic_text(data)
+        if not content:
+            raise RuntimeError("Anthropic returned an empty assistant response.")
+        return content
+
+    raise RuntimeError(
+        "Anthropic request failed for every fallback model. Last model error: "
+        f"{last_model_error or 'unknown model error'}"
+    )
 
 
 def run_personal_assistant(
