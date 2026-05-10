@@ -484,9 +484,13 @@ def _load_seed_role_records() -> list[dict[str, Any]]:
     return records
 
 
-def get_role_records(extra_roles: list[str] | None = None) -> list[dict[str, Any]]:
+def get_role_records(
+    extra_roles: list[str] | None = None,
+    sector: str = "",
+) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     seen: set[str] = set()
+    selected_sector = sector.strip().lower()
 
     seed_records = _load_seed_role_records()
     source_records: list[dict[str, Any]] = []
@@ -507,7 +511,10 @@ def get_role_records(extra_roles: list[str] | None = None) -> list[dict[str, Any
 
     for record in source_records:
         label = str(record.get("label", "")).strip()
+        category = str(record.get("category", "")).strip()
         if not label or label in seen:
+            continue
+        if selected_sector and category.lower() != selected_sector:
             continue
         records.append(record)
         seen.add(label)
@@ -518,7 +525,7 @@ def get_role_records(extra_roles: list[str] | None = None) -> list[dict[str, Any
             continue
         records.append(
             {
-                "category": "Custom",
+                "category": sector.strip() or "Custom",
                 "label": label,
                 "aliases": [],
                 "keywords": [],
@@ -529,13 +536,43 @@ def get_role_records(extra_roles: list[str] | None = None) -> list[dict[str, Any
     return records
 
 
-def get_role_record(role_label: str, extra_roles: list[str] | None = None) -> dict[str, Any] | None:
+def get_role_record(
+    role_label: str,
+    extra_roles: list[str] | None = None,
+    sector: str = "",
+) -> dict[str, Any] | None:
     target = role_label.strip().lower()
     if not target:
         return None
-    for record in get_role_records(extra_roles=extra_roles):
+    for record in get_role_records(extra_roles=extra_roles, sector=sector):
         label = str(record.get("label", "")).strip().lower()
         aliases = [str(x).strip().lower() for x in record.get("aliases", []) or []]
         if target == label or target in aliases:
             return record
     return None
+
+
+def get_sector_options() -> list[str]:
+    sectors: list[str] = []
+    seen: set[str] = set()
+    for record in get_role_records():
+        category = str(record.get("category", "")).strip()
+        if not category or category in seen:
+            continue
+        sectors.append(category)
+        seen.add(category)
+    return sectors
+
+
+def get_roles_for_sector(sector: str) -> list[str]:
+    target = sector.strip().lower()
+    if not target:
+        return []
+    roles: list[str] = []
+    for record in get_role_records():
+        category = str(record.get("category", "")).strip().lower()
+        if category == target:
+            label = str(record.get("label", "")).strip()
+            if label:
+                roles.append(label)
+    return roles

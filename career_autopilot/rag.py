@@ -93,8 +93,13 @@ def _record_blob(record: dict[str, object]) -> str:
     return " ".join(x for x in fields if x).strip()
 
 
-def role_suggestions(query: str, extra_roles: list[str] | None = None, limit: int = 20) -> list[str]:
-    records = get_role_records(extra_roles=extra_roles)
+def role_suggestions(
+    query: str,
+    extra_roles: list[str] | None = None,
+    limit: int = 20,
+    sector: str = "",
+) -> list[str]:
+    records = get_role_records(extra_roles=extra_roles, sector=sector)
     if not query.strip():
         return [str(record["label"]) for record in records[:limit]]
 
@@ -136,6 +141,7 @@ def role_terms(
     selected_role: str,
     custom_role: str = "",
     extra_roles: list[str] | None = None,
+    sector: str = "",
 ) -> tuple[str, list[str]]:
     if selected_role == "custom":
         role_text = custom_role.strip()
@@ -145,15 +151,15 @@ def role_terms(
     if not role_text:
         return "any", []
 
-    record = get_role_record(role_text, extra_roles=extra_roles)
+    record = get_role_record(role_text, extra_roles=extra_roles, sector=sector)
     if record:
         blob = _record_blob(record)
         return role_text, extract_keywords(blob, limit=40)
 
     expansions = [role_text]
-    for label in role_suggestions(role_text, extra_roles=extra_roles, limit=5):
+    for label in role_suggestions(role_text, extra_roles=extra_roles, limit=5, sector=sector):
         expansions.append(label)
-        matched_record = get_role_record(label, extra_roles=extra_roles)
+        matched_record = get_role_record(label, extra_roles=extra_roles, sector=sector)
         if matched_record:
             expansions.append(_record_blob(matched_record))
     return role_text, extract_keywords(" ".join(expansions), limit=40)
@@ -225,8 +231,9 @@ def recommend_jobs_rag(
     selected_role: str,
     custom_role: str = "",
     top_k: int = 15,
+    sector: str = "",
 ) -> tuple[str, list[str], list[MatchResult]]:
-    role_text, role_kw = role_terms(selected_role, custom_role)
+    role_text, role_kw = role_terms(selected_role, custom_role, sector=sector)
     resume_kw = extract_keywords(resume_text, limit=30)
     filtered_jobs = filter_jobs_for_role(jobs, role_kw, role_text)
 

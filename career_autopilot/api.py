@@ -18,7 +18,9 @@ import stripe
 from supabase import Client, create_client
 
 from .models import JobPosting
+from .profile_options import company_matches_ranking, get_profile_option_payload
 from .rag import MatchResult, recommend_jobs_rag, role_suggestions
+from .role_catalog import get_roles_for_sector
 from .scanners import scan_greenhouse, scan_lever
 from .storage import load_jobs
 
@@ -195,6 +197,68 @@ def _clean_price_id(raw: str) -> str:
     return cleaned
 
 
+def _location_tokens(text: str) -> set[str]:
+    return {token.strip().lower() for token in re.split(r"[,/|]+", text or "") if token.strip()}
+
+
+def _country_terms(country: str) -> set[str]:
+    selected = country.strip().lower()
+    if not selected:
+        return set()
+    aliases = {
+        "united states": {"united states", "usa", "us", "u.s.", "u.s.a."},
+        "united kingdom": {"united kingdom", "uk", "u.k.", "great britain", "britain"},
+        "united arab emirates": {"united arab emirates", "uae", "u.a.e."},
+    }
+    return aliases.get(selected, {selected})
+
+
+def _job_matches_location_filters(job: JobPosting, app_profile: dict[str, Any]) -> bool:
+    location_text = f"{job.location} {job.description[:800]}".lower()
+    work_preferences = {str(x).strip().lower() for x in app_profile.get("work_preferences", []) or []}
+    country = str(app_profile.get("country", "")).strip().lower()
+    region = str(app_profile.get("region", "")).strip().lower()
+    preferred = _location_tokens(str(app_profile.get("preferred_locations", "")))
+
+    if "remote" in work_preferences and "remote" in location_text:
+        return True
+
+    location_terms = {token for token in preferred if len(token) > 1}
+    if region:
+        location_terms.add(region)
+    if country:
+        location_terms.update(_country_terms(country))
+
+    if not location_terms:
+        return True
+    return any(term in location_text for term in location_terms)
+
+
+def _job_matches_sector(job: JobPosting, sector: str) -> bool:
+    roles = get_roles_for_sector(sector)
+    if not roles:
+        return True
+    blob = f"{job.title} {job.description[:1200]}".lower()
+    return any(role.lower() in blob for role in roles)
+
+
+def _filter_jobs_by_profile_preferences(
+    jobs: list[JobPosting],
+    app_profile: dict[str, Any],
+) -> list[JobPosting]:
+    selected_sector = str(app_profile.get("target_sector", "")).strip()
+    company_ranking_filter = str(app_profile.get("company_ranking_filter", "any")).strip()
+
+    filtered = [
+        job
+        for job in jobs
+        if _job_matches_location_filters(job, app_profile)
+        and _job_matches_sector(job, selected_sector)
+        and company_matches_ranking(job.company, company_ranking_filter)
+    ]
+    return filtered if filtered else jobs
+
+
 def _profile_context_blob(profile: dict[str, Any] | None) -> str:
     if not profile:
         return ""
@@ -207,8 +271,12 @@ def _profile_context_blob(profile: dict[str, Any] | None) -> str:
     if isinstance(application_profile, dict):
         fields.extend(
             [
+                str(application_profile.get("target_sector", "")),
+                str(application_profile.get("country", "")),
+                str(application_profile.get("region", "")),
                 str(application_profile.get("work_authorization_status", "")),
                 str(application_profile.get("preferred_locations", "")),
+                str(application_profile.get("company_ranking_filter", "")),
                 str(application_profile.get("summary", "")),
             ]
         )
@@ -246,9 +314,9 @@ def _fetch_roles_from_google_form_csv() -> list[str]:
         return []
 
 
-def _search_roles(query: str) -> list[str]:
+def _search_roles(query: str, sector: str = "") -> list[str]:
     extra_roles = _fetch_roles_from_google_form_csv()
-    return role_suggestions(query, extra_roles=extra_roles, limit=20)
+    return role_suggestions(query, extra_roles=extra_roles, limit=20, sector=sector)
 
 
 def _send_application_confirmation_email(to_email: str, role: str, job: JobPosting) -> bool:
@@ -408,8 +476,11 @@ class ProfileUpsertRequest(BaseModel):
     target_role: str = ""
     skills: list[str] = []
     experience_level: str = ""
+    target_sector: str = ""
     phone: str = ""
     location: str = ""
+    country: str = ""
+    region: str = ""
     linkedin_url: str = ""
     portfolio_url: str = ""
     work_authorization_status: str = ""
@@ -425,6 +496,7 @@ class ProfileUpsertRequest(BaseModel):
     auto_apply_consent: bool = False
     require_approval_before_apply: bool = True
     work_preferences: list[str] = []
+    company_ranking_filter: str = "any"
     companies_to_avoid: str = ""
     max_applications_per_day: int = 10
     minimum_match_score: float = 80.0
@@ -502,6 +574,7 @@ def _run_auto_apply_for_profile(
 
     jobs = _discover_live_jobs(role_query, limit=160)
     matched = [j for j in jobs if _text_matches_query(j, role_query)]
+    matched = _filter_jobs_by_profile_preferences(matched, app_profile)
     if avoid_companies:
         matched = [j for j in matched if j.company.lower() not in avoid_companies]
     profile_context = _profile_context_blob(profile)
@@ -511,6 +584,7 @@ def _run_auto_apply_for_profile(
         selected_role="custom",
         custom_role=role_query,
         top_k=max(available_slots * 4, 20),
+        sector=str(app_profile.get("target_sector", "")).strip(),
     )
     min_threshold = max(0.0, min(100.0, minimum_match_score)) / 100.0
     ranked_jobs = [
@@ -581,8 +655,13 @@ def auth_me(authorization: str | None = Header(default=None)) -> dict[str, Any]:
 
 
 @app.get("/api/roles/search")
-def search_roles(q: str = "") -> dict[str, Any]:
-    return {"roles": _search_roles(q)}
+def search_roles(q: str = "", sector: str = "") -> dict[str, Any]:
+    return {"roles": _search_roles(q, sector=sector)}
+
+
+@app.get("/api/profile/options")
+def get_profile_options() -> dict[str, Any]:
+    return get_profile_option_payload()
 
 
 @app.post("/api/profile/upsert")
@@ -600,8 +679,11 @@ def upsert_profile(
         "skills": body.skills,
         "experience_level": body.experience_level,
         "application_profile": {
+            "target_sector": body.target_sector,
             "phone": body.phone,
             "location": body.location,
+            "country": body.country,
+            "region": body.region,
             "linkedin_url": body.linkedin_url,
             "portfolio_url": body.portfolio_url,
             "work_authorization_status": body.work_authorization_status,
@@ -617,6 +699,7 @@ def upsert_profile(
             "auto_apply_consent": body.auto_apply_consent,
             "require_approval_before_apply": body.require_approval_before_apply,
             "work_preferences": body.work_preferences,
+            "company_ranking_filter": body.company_ranking_filter,
             "companies_to_avoid": body.companies_to_avoid,
             "max_applications_per_day": body.max_applications_per_day,
             "minimum_match_score": body.minimum_match_score,
@@ -650,6 +733,26 @@ def get_profile(authorization: str | None = Header(default=None)) -> dict[str, A
         raise HTTPException(status_code=500, detail=f"Failed to fetch profile: {exc}")
     rows = getattr(resp, "data", []) or []
     return {"profile": rows[0] if rows else None}
+
+
+@app.get("/api/applications/me")
+def get_applications(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _current_user(authorization)
+    user_id = _user_id_from_user(user)
+    sb = _supabase()
+    try:
+        resp = (
+            sb.table("applications")
+            .select("*", count="exact")
+            .eq("user_id", user_id)
+            .order("created_at", desc=True)
+            .limit(25)
+            .execute()
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch applications: {exc}")
+    rows = getattr(resp, "data", []) or []
+    return {"applications": rows, "count": int(getattr(resp, "count", 0) or 0)}
 
 
 @app.post("/api/rag/match")
@@ -688,11 +791,21 @@ async def rag_match(
     # Blend profile context with resume context for better relevance.
     sb = _supabase()
     profile_blob = ""
+    selected_sector = ""
     try:
         uid = _user_id_from_user(user)
         profile_resp = sb.table("profiles").select("*").eq("id", uid).limit(1).execute()
         rows = getattr(profile_resp, "data", []) or []
-        profile_blob = _profile_context_blob(rows[0] if rows else None)
+        current_profile = rows[0] if rows else None
+        profile_blob = _profile_context_blob(current_profile)
+        if current_profile:
+            selected_sector = str(
+                (current_profile.get("application_profile") or {}).get("target_sector", "")
+            ).strip()
+            jobs = _filter_jobs_by_profile_preferences(
+                jobs,
+                current_profile.get("application_profile") or {},
+            )
     except Exception:
         profile_blob = ""
 
@@ -704,6 +817,7 @@ async def rag_match(
         selected_role=role,
         custom_role=custom_role,
         top_k=max(1, min(top_k, 50)),
+        sector=selected_sector,
     )
     strict_threshold = min_score / 5.0
     results = _results_to_cards(matched, min_score=strict_threshold)

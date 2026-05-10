@@ -16,6 +16,33 @@ type MatchResult = {
   explanation: string;
 };
 
+type CountryOption = {
+  label: string;
+  regions: string[];
+};
+
+type CompanyRankingOption = {
+  value: string;
+  label: string;
+};
+
+type ProfileOptions = {
+  job_sectors: string[];
+  countries: CountryOption[];
+  company_ranking_filters: CompanyRankingOption[];
+};
+
+type ApplicationRecord = {
+  id: number;
+  company: string;
+  title: string;
+  location: string;
+  status: string;
+  job_url: string;
+  created_at: string;
+  notes?: string;
+};
+
 function cleanPriceId(raw: string): string {
   return raw
     .replace(/\\n/g, "")
@@ -41,8 +68,11 @@ export default function DashboardPage() {
   const [targetRole, setTargetRole] = useState("Software Engineer");
   const [experienceLevel, setExperienceLevel] = useState("");
   const [skillsText, setSkillsText] = useState("");
+  const [targetSector, setTargetSector] = useState("");
   const [phone, setPhone] = useState("");
   const [location, setLocation] = useState("");
+  const [country, setCountry] = useState("");
+  const [region, setRegion] = useState("");
   const [linkedinUrl, setLinkedinUrl] = useState("");
   const [portfolioUrl, setPortfolioUrl] = useState("");
   const [workAuthorizationStatus, setWorkAuthorizationStatus] = useState("");
@@ -59,6 +89,7 @@ export default function DashboardPage() {
   const [autoApplyConsent, setAutoApplyConsent] = useState(false);
   const [requireApprovalBeforeApply, setRequireApprovalBeforeApply] = useState(true);
   const [workPreferences, setWorkPreferences] = useState("");
+  const [companyRankingFilter, setCompanyRankingFilter] = useState("any");
   const [companiesToAvoid, setCompaniesToAvoid] = useState("");
   const [maxApplicationsPerDay, setMaxApplicationsPerDay] = useState("10");
   const [minimumMatchScore, setMinimumMatchScore] = useState("80");
@@ -67,6 +98,19 @@ export default function DashboardPage() {
   const [results, setResults] = useState<MatchResult[]>([]);
   const [roleSuggestions, setRoleSuggestions] = useState<string[]>([]);
   const [roleInputDirty, setRoleInputDirty] = useState(false);
+  const [profileOptions, setProfileOptions] = useState<ProfileOptions>({
+    job_sectors: [],
+    countries: [],
+    company_ranking_filters: []
+  });
+  const [applications, setApplications] = useState<ApplicationRecord[]>([]);
+  const [applicationsCount, setApplicationsCount] = useState(0);
+
+  const selectedCountry = useMemo(
+    () => profileOptions.countries.find((entry) => entry.label === country),
+    [country, profileOptions.countries]
+  );
+  const availableRegions = selectedCountry?.regions ?? [];
 
   const canRunMatch = useMemo(() => !!token && !!resumeFile, [token, resumeFile]);
 
@@ -83,7 +127,11 @@ export default function DashboardPage() {
       setToken(session.access_token);
       setUserEmail(session.user.email ?? "");
       setLoading(false);
-      await loadProfile(session.access_token);
+      await Promise.all([
+        loadProfileOptions(session.access_token),
+        loadProfile(session.access_token),
+        loadApplications(session.access_token)
+      ]);
     }
     bootstrap();
     return () => {
@@ -103,7 +151,17 @@ export default function DashboardPage() {
       void fetchRoleSuggestions(query);
     }, 180);
     return () => window.clearTimeout(timer);
-  }, [backendUrl, targetRole, token]);
+  }, [backendUrl, targetRole, targetSector, token]);
+
+  useEffect(() => {
+    if (!country) {
+      setRegion("");
+      return;
+    }
+    if (region && !availableRegions.includes(region)) {
+      setRegion("");
+    }
+  }, [availableRegions, country, region]);
 
   function isBackendConfigured(): boolean {
     return !!backendUrl && /^https?:\/\//.test(backendUrl);
@@ -130,14 +188,36 @@ export default function DashboardPage() {
       return;
     }
     try {
+      const params = new URLSearchParams({ q: query });
+      if (targetSector) {
+        params.set("sector", targetSector);
+      }
       const res = await fetch(
-        `${backendUrl}/api/roles/search?q=${encodeURIComponent(query)}`,
+        `${backendUrl}/api/roles/search?${params.toString()}`,
         { headers: { Authorization: `Bearer ${accessToken}` } }
       );
       const data = await res.json();
       setRoleSuggestions(Array.isArray(data?.roles) ? data.roles : []);
     } catch {
       // silently ignore suggestions failures
+    }
+  }
+
+  async function loadProfileOptions(accessToken: string): Promise<void> {
+    try {
+      const res = await fetch(`${backendUrl}/api/profile/options`, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+      const data = await res.json();
+      setProfileOptions({
+        job_sectors: Array.isArray(data?.job_sectors) ? data.job_sectors : [],
+        countries: Array.isArray(data?.countries) ? data.countries : [],
+        company_ranking_filters: Array.isArray(data?.company_ranking_filters)
+          ? data.company_ranking_filters
+          : []
+      });
+    } catch (err) {
+      console.error(err);
     }
   }
 
@@ -155,8 +235,11 @@ export default function DashboardPage() {
       setSkillsText((profile.skills || []).join(", "));
 
       const app = profile.application_profile || {};
+      setTargetSector(app.target_sector ?? "");
       setPhone(app.phone ?? "");
       setLocation(app.location ?? "");
+      setCountry(app.country ?? "");
+      setRegion(app.region ?? "");
       setLinkedinUrl(app.linkedin_url ?? "");
       setPortfolioUrl(app.portfolio_url ?? "");
       setWorkAuthorizationStatus(app.work_authorization_status ?? "");
@@ -173,9 +256,24 @@ export default function DashboardPage() {
       setAutoApplyConsent(Boolean(app.auto_apply_consent));
       setRequireApprovalBeforeApply(Boolean(app.require_approval_before_apply ?? true));
       setWorkPreferences((app.work_preferences || []).join(", "));
+      setCompanyRankingFilter(app.company_ranking_filter ?? "any");
       setCompaniesToAvoid(app.companies_to_avoid ?? "");
       setMaxApplicationsPerDay(String(app.max_applications_per_day ?? 10));
       setMinimumMatchScore(String(app.minimum_match_score ?? 80));
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  async function loadApplications(accessToken: string = token): Promise<void> {
+    if (!isBackendConfigured()) return;
+    try {
+      const res = await fetch(`${backendUrl}/api/applications/me`, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+      const data = await res.json();
+      setApplications(Array.isArray(data?.applications) ? data.applications : []);
+      setApplicationsCount(Number(data?.count ?? 0));
     } catch (err) {
       console.error(err);
     }
@@ -200,8 +298,11 @@ export default function DashboardPage() {
         target_role: targetRole,
         skills,
         experience_level: experienceLevel,
+        target_sector: targetSector,
         phone,
         location,
+        country,
+        region,
         linkedin_url: linkedinUrl,
         portfolio_url: portfolioUrl,
         work_authorization_status: workAuthorizationStatus,
@@ -216,6 +317,7 @@ export default function DashboardPage() {
         auto_apply_enabled: autoApplyEnabled,
         auto_apply_consent: autoApplyConsent,
         require_approval_before_apply: requireApprovalBeforeApply,
+        company_ranking_filter: companyRankingFilter,
         companies_to_avoid: companiesToAvoid,
         max_applications_per_day: Number(maxApplicationsPerDay || "10"),
         minimum_match_score: Number(minimumMatchScore || "80"),
@@ -297,8 +399,10 @@ export default function DashboardPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.detail ?? "Auto Apply failed.");
+      await loadApplications();
       setMessage(
-        `Auto Apply completed. Matched ${data.matched_jobs}, queued ${data.queued_applications}.`
+        data?.message ??
+          `Auto Apply completed. Matched ${data.matched_jobs}, queued ${data.queued_applications}.`
       );
     } catch (err) {
       const text = err instanceof Error ? err.message : "Auto Apply failed.";
@@ -375,6 +479,17 @@ export default function DashboardPage() {
             <input value={fullName} onChange={(e) => setFullName(e.target.value)} />
           </label>
           <label>
+            Job Sector
+            <select value={targetSector} onChange={(e) => setTargetSector(e.target.value)}>
+              <option value="">Any sector</option>
+              {profileOptions.job_sectors.map((sector) => (
+                <option key={sector} value={sector}>
+                  {sector}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
             Target Role
             <input
               value={targetRole}
@@ -431,6 +546,38 @@ export default function DashboardPage() {
             <input value={location} onChange={(e) => setLocation(e.target.value)} />
           </label>
           <label>
+            Country
+            <select
+              value={country}
+              onChange={(e) => {
+                setCountry(e.target.value);
+                setRegion("");
+              }}
+            >
+              <option value="">Any country</option>
+              {profileOptions.countries.map((entry) => (
+                <option key={entry.label} value={entry.label}>
+                  {entry.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            State / Province / Region
+            <select
+              value={region}
+              onChange={(e) => setRegion(e.target.value)}
+              disabled={!country || availableRegions.length === 0}
+            >
+              <option value="">{country ? "Any region" : "Select country first"}</option>
+              {availableRegions.map((entry) => (
+                <option key={entry} value={entry}>
+                  {entry}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
             LinkedIn URL
             <input value={linkedinUrl} onChange={(e) => setLinkedinUrl(e.target.value)} />
           </label>
@@ -461,6 +608,19 @@ export default function DashboardPage() {
               value={workPreferences}
               onChange={(e) => setWorkPreferences(e.target.value)}
             />
+          </label>
+          <label>
+            Company Ranking Filter
+            <select
+              value={companyRankingFilter}
+              onChange={(e) => setCompanyRankingFilter(e.target.value)}
+            >
+              {profileOptions.company_ranking_filters.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
           </label>
           <label>
             Salary Expectation (optional)
@@ -589,7 +749,43 @@ export default function DashboardPage() {
           Auto Apply uses your saved profile and explicit consent settings to queue supported
           applications.
         </p>
-        <button onClick={runAutoApply}>Run Auto Apply</button>
+        <div className="inline-actions">
+          <button onClick={runAutoApply}>Run Auto Apply</button>
+          <button onClick={() => void loadApplications()} className="ghost" type="button">
+            Refresh Applications
+          </button>
+        </div>
+        <div className="applications-meta">
+          <strong>{applicationsCount}</strong> application records found for your account.
+        </div>
+        <div className="applications-list">
+          {applications.length === 0 ? (
+            <p className="empty-state">
+              No application records yet. When Auto Apply queues jobs, they will appear here.
+            </p>
+          ) : (
+            applications.map((application) => (
+              <article key={application.id} className="application-card">
+                <div className="application-topline">
+                  <h3>{application.title || "Untitled role"}</h3>
+                  <span className={`status-pill ${application.status}`}>
+                    {application.status.replace(/_/g, " ")}
+                  </span>
+                </div>
+                <p>
+                  {application.company || "Unknown company"} | {application.location || "Unknown location"}
+                </p>
+                <p>{new Date(application.created_at).toLocaleString()}</p>
+                {application.notes && <p>{application.notes}</p>}
+                {application.job_url && (
+                  <a href={application.job_url} target="_blank" rel="noreferrer">
+                    Open Job
+                  </a>
+                )}
+              </article>
+            ))
+          )}
+        </div>
       </section>
 
       <section className="panel">

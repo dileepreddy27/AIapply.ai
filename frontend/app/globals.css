@@ -186,6 +186,13 @@ button:disabled {
   margin-top: 0.1rem;
 }
 
+.inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: center;
+}
+
 .grid {
   display: grid;
   gap: 0.7rem;
@@ -219,6 +226,75 @@ button:disabled {
 .suggestion-chip.selected {
   background: #d8f4e8;
   border-color: #86cfb4;
+}
+
+.applications-meta {
+  margin-top: 0.9rem;
+  color: var(--ink-soft);
+}
+
+.applications-list {
+  display: grid;
+  gap: 0.7rem;
+  margin-top: 0.8rem;
+}
+
+.application-card {
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 12px;
+  padding: 0.85rem;
+}
+
+.application-topline {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.8rem;
+  align-items: flex-start;
+}
+
+.application-topline h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.application-card p {
+  margin: 0.3rem 0;
+  color: var(--ink-soft);
+}
+
+.application-card a {
+  display: inline-block;
+  margin-top: 0.4rem;
+  color: #0d6f56;
+  font-weight: 700;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: capitalize;
+  background: #eef5f3;
+  color: var(--ink-soft);
+}
+
+.status-pill.approval_required {
+  background: #fff4d7;
+  color: #916100;
+}
+
+.status-pill.queued_auto_apply {
+  background: #dff7ec;
+  color: #0b6b4e;
+}
+
+.empty-state {
+  margin: 0;
+  color: var(--ink-soft);
 }
 
 .results-grid {
