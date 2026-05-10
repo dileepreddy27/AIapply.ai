@@ -76,6 +76,7 @@ type SubscriptionState = {
   plan: "basic" | "pro";
   label: string;
   status: string;
+  testing_mode?: boolean;
   assistant_prompts_used: number;
   assistant_prompts_limit: number | null;
   assistant_prompts_remaining: number | null;
@@ -124,6 +125,7 @@ function defaultSubscription(): SubscriptionState {
     plan: "basic",
     label: "Basic",
     status: "inactive",
+    testing_mode: false,
     assistant_prompts_used: 0,
     assistant_prompts_limit: 20,
     assistant_prompts_remaining: 20,
@@ -173,7 +175,7 @@ export default function DashboardPage() {
   const [applicationSummary, setApplicationSummary] = useState("");
   const [autoApplyEnabled, setAutoApplyEnabled] = useState(false);
   const [autoApplyConsent, setAutoApplyConsent] = useState(false);
-  const [requireApprovalBeforeApply, setRequireApprovalBeforeApply] = useState(true);
+  const [requireApprovalBeforeApply, setRequireApprovalBeforeApply] = useState(false);
   const [workPreferences, setWorkPreferences] = useState("");
   const [companyRankingFilter, setCompanyRankingFilter] = useState("any");
   const [companiesToAvoid, setCompaniesToAvoid] = useState("");
@@ -219,7 +221,8 @@ export default function DashboardPage() {
     [country, profileOptions.countries]
   );
   const availableRegions = selectedCountry?.regions ?? [];
-  const autoApplyLocked = !subscription.features.can_auto_apply;
+  const testingPremiumMode = subscription.testing_mode || subscription.status === "testing";
+  const autoApplyLocked = !testingPremiumMode && !subscription.features.can_auto_apply;
   const recentApplications = useMemo(() => applications.slice(0, 6), [applications]);
   const topResults = useMemo(() => results.slice(0, 6), [results]);
   const sourceMix = useMemo(() => {
@@ -274,8 +277,9 @@ export default function DashboardPage() {
     workAuthorizationStatus,
     workPreferences
   ]);
-  const assistantUsageLabel =
-    subscription.assistant_prompts_limit === null
+  const assistantUsageLabel = testingPremiumMode
+    ? "Premium features enabled for testing"
+    : subscription.assistant_prompts_limit === null
       ? "Unlimited prompts"
       : `${subscription.assistant_prompts_remaining ?? 0} prompts left`;
 
@@ -332,11 +336,6 @@ export default function DashboardPage() {
     }
   }, [availableRegions, country, region]);
 
-  useEffect(() => {
-    if (autoApplyLocked && autoApplyEnabled) {
-      setAutoApplyEnabled(false);
-    }
-  }, [autoApplyEnabled, autoApplyLocked]);
 
   useEffect(() => {
     if (!assistantModes.length) return;
@@ -375,11 +374,14 @@ export default function DashboardPage() {
 
   function humanizeAssistantError(text: string): string {
     const normalized = text.toLowerCase();
+    if (normalized.includes("incorrect api key") || normalized.includes("invalid_api_key") || normalized.includes("openai api key is invalid")) {
+      return "Your OpenAI key is invalid in Render. Update OPENAI_API_KEY, keep ASSISTANT_PROVIDER=openai, redeploy Render, and reopen the assistant.";
+    }
     if (normalized.includes("insufficient balance") || normalized.includes("balance is empty")) {
-      return "The configured assistant provider does not have available API credit right now. Top up that provider, or switch Render to ASSISTANT_PROVIDER=openai with a funded OPENAI_API_KEY, then reopen the assistant.";
+      return "The assistant account does not have available API credit right now. Add billing to the active OpenAI account in Render, redeploy if needed, and try again.";
     }
     if (normalized.includes("quota") || normalized.includes("rate limit")) {
-      return "The assistant provider hit a quota or rate-limit issue. Check billing for the active provider in Render and try again.";
+      return "The OpenAI assistant hit a quota or rate-limit issue. Check OpenAI billing and usage for the key configured in Render, then try again.";
     }
     return text;
   }
@@ -547,9 +549,10 @@ export default function DashboardPage() {
       setWillingToRelocate(Boolean(app.willing_to_relocate));
       setSalaryExpectation(app.salary_expectation ?? "");
       setApplicationSummary(app.summary ?? "");
-      setAutoApplyEnabled(Boolean(app.auto_apply_enabled));
-      setAutoApplyConsent(Boolean(app.auto_apply_consent));
-      setRequireApprovalBeforeApply(Boolean(app.require_approval_before_apply ?? true));
+      const storedAutoApplyEnabled = Boolean(app.auto_apply_enabled);
+      setAutoApplyEnabled(storedAutoApplyEnabled);
+      setAutoApplyConsent(storedAutoApplyEnabled ? Boolean(app.auto_apply_consent) : false);
+      setRequireApprovalBeforeApply(storedAutoApplyEnabled ? Boolean(app.require_approval_before_apply) : false);
       setWorkPreferences((app.work_preferences || []).join(", "));
       setCompanyRankingFilter(app.company_ranking_filter ?? "any");
       setCompaniesToAvoid(app.companies_to_avoid ?? "");
@@ -633,9 +636,9 @@ export default function DashboardPage() {
         preferred_locations: preferredLocations,
         willing_to_relocate: willingToRelocate,
         salary_expectation: salaryExpectation,
-        auto_apply_enabled: subscription.features.can_auto_apply ? autoApplyEnabled : false,
-        auto_apply_consent: autoApplyConsent,
-        require_approval_before_apply: requireApprovalBeforeApply,
+        auto_apply_enabled: autoApplyEnabled,
+        auto_apply_consent: autoApplyEnabled ? autoApplyConsent : false,
+        require_approval_before_apply: autoApplyEnabled ? requireApprovalBeforeApply : false,
         company_ranking_filter: companyRankingFilter,
         companies_to_avoid: companiesToAvoid,
         max_applications_per_day: Number(maxApplicationsPerDay || "10"),
@@ -714,7 +717,7 @@ export default function DashboardPage() {
       return;
     }
     if (autoApplyLocked) {
-      setMessage("Auto Apply is available on the Pro plan. Upgrade to unlock hands-free applications.");
+      setMessage("Auto Apply is still locked by plan settings. Turn on testing unlock or switch this account to Pro.");
       return;
     }
     if (!autoApplyEnabled || !autoApplyConsent) {
@@ -879,8 +882,8 @@ export default function DashboardPage() {
         <div className="sidebar-plan-card">
           <span className={`plan-pill ${subscription.plan}`}>{subscription.label}</span>
           <h3>{assistantUsageLabel}</h3>
-          <p>Status: {subscription.status.replace(/_/g, " ")}</p>
-          <p className="field-hint">Workflow testing mode: focus on profile, matching, auto apply, and analytics.</p>
+          <p>Status: {testingPremiumMode ? "testing unlock active" : subscription.status.replace(/_/g, " ")}</p>
+          <p className="field-hint">Testing mode is active, so Auto Apply and assistant workflows stay visible while we validate the product flow.</p>
         </div>
 
         <button onClick={signOut} className="ghost sidebar-signout">
@@ -898,8 +901,8 @@ export default function DashboardPage() {
             </p>
           </div>
           <div className="dashboard-topbar-meta">
-            <span className="topbar-chip">{targetRole || "Target role pending"}</span>
-            <span className="topbar-chip">{country || "Global search"}</span>
+            <span className="topbar-chip">{subProfileName || targetRole || "Target role pending"}</span>
+            <span className="topbar-chip">{testingPremiumMode ? "Testing unlock active" : (country || "Global search")}</span>
           </div>
         </header>
 
@@ -1194,15 +1197,10 @@ export default function DashboardPage() {
                 <p className="feature-kicker">Automation</p>
                 <h3>Automation Rules</h3>
               </div>
-              <button onClick={runAutoApply} disabled={autoApplyLocked}>
+              <button onClick={runAutoApply}>
                 Run Auto Apply
               </button>
             </div>
-            {autoApplyLocked && (
-              <p className="locked-note">
-                Auto Apply stays behind Pro. Basic users still get matching, tracking, and assistant support.
-              </p>
-            )}
             <p className="field-hint">
               Live discovery uses Greenhouse and Lever directly, and also supports LinkedIn, Indeed,
               and other portal imports from the backend `data/imports` folder.
@@ -1243,7 +1241,7 @@ export default function DashboardPage() {
                   min="1"
                   max="50"
                   value={maxApplicationsPerDay}
-                  disabled={autoApplyLocked}
+
                   onChange={(e) => setMaxApplicationsPerDay(e.target.value)}
                 />
               </label>
@@ -1254,7 +1252,7 @@ export default function DashboardPage() {
                   min="0"
                   max="100"
                   value={minimumMatchScore}
-                  disabled={autoApplyLocked}
+
                   onChange={(e) => setMinimumMatchScore(e.target.value)}
                 />
               </label>
@@ -1285,8 +1283,14 @@ export default function DashboardPage() {
                 <input
                   type="checkbox"
                   checked={autoApplyEnabled}
-                  disabled={autoApplyLocked}
-                  onChange={(e) => setAutoApplyEnabled(e.target.checked)}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setAutoApplyEnabled(checked);
+                    if (!checked) {
+                      setAutoApplyConsent(false);
+                      setRequireApprovalBeforeApply(false);
+                    }
+                  }}
                 />
               </label>
               <label className="toggle-card">
@@ -1294,7 +1298,6 @@ export default function DashboardPage() {
                 <input
                   type="checkbox"
                   checked={autoApplyConsent}
-                  disabled={autoApplyLocked}
                   onChange={(e) => setAutoApplyConsent(e.target.checked)}
                 />
               </label>
@@ -1303,7 +1306,6 @@ export default function DashboardPage() {
                 <input
                   type="checkbox"
                   checked={requireApprovalBeforeApply}
-                  disabled={autoApplyLocked}
                   onChange={(e) => setRequireApprovalBeforeApply(e.target.checked)}
                 />
               </label>
@@ -1486,9 +1488,11 @@ export default function DashboardPage() {
                 <p className="brand">AIapply Agent</p>
                 <h2>Personal Assistant</h2>
                 <p className="status-inline">
-                  {subscription.assistant_prompts_limit === null
-                    ? `${subscription.label} plan · unlimited prompts`
-                    : `${subscription.label} plan · ${subscription.assistant_prompts_remaining ?? 0} prompts left this month`}
+                  {testingPremiumMode
+                    ? "Testing mode | premium assistant enabled"
+                    : subscription.assistant_prompts_limit === null
+                      ? `${subscription.label} plan | unlimited prompts`
+                      : `${subscription.label} plan | ${subscription.assistant_prompts_remaining ?? 0} prompts left this month`}
                 </p>
               </div>
               <button type="button" className="ghost" onClick={() => setAssistantOpen(false)}>

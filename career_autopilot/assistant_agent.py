@@ -101,7 +101,7 @@ def build_assistant_messages(
 ) -> list[dict[str, str]]:
     mode_details = ASSISTANT_MODE_DETAILS.get(mode, ASSISTANT_MODE_DETAILS["job_search_planning"])
     system_prompt = (
-        "You are AIapply.ai's Personal Assistant Agent powered by DeepSeek.\n"
+        "You are AIapply.ai's Personal Assistant Agent.\n"
         f"Current subscription tier: {plan_label}.\n"
         f"Assistant mode: {mode_details['label']}.\n"
         "Follow these rules:\n"
@@ -248,15 +248,22 @@ def run_openai_assistant(
         json=payload,
         timeout=60,
     )
+    detail_payload = None
+    try:
+        detail_payload = response.json()
+    except Exception:
+        detail_payload = None
+
+    if response.status_code in {401, 403}:
+        detail_text = str(detail_payload or response.text)
+        if "invalid_api_key" in detail_text.lower() or "incorrect api key" in detail_text.lower():
+            raise RuntimeError("OpenAI API key is invalid. Update OPENAI_API_KEY in Render and redeploy.")
     if response.status_code == 429:
         raise RuntimeError(
             "OpenAI rate limit or quota was reached. Check your OpenAI billing and usage tier, then try again."
         )
     if not response.ok:
-        try:
-            detail = response.json()
-        except Exception:
-            detail = response.text
+        detail = detail_payload if detail_payload is not None else response.text
         raise RuntimeError(f"OpenAI request failed: {detail}")
 
     data = response.json()
@@ -270,7 +277,7 @@ def run_personal_assistant(
     messages: list[dict[str, str]],
     user_id: str,
 ) -> str:
-    provider = (os.getenv("ASSISTANT_PROVIDER", "auto").strip().lower() or "auto")
+    provider = (os.getenv("ASSISTANT_PROVIDER", "openai").strip().lower() or "openai")
     has_deepseek = bool(os.getenv("DEEPSEEK_API_KEY", "").strip())
     has_openai = bool(os.getenv("OPENAI_API_KEY", "").strip())
 
@@ -279,7 +286,7 @@ def run_personal_assistant(
     if provider == "openai":
         return run_openai_assistant(messages, user_id)
     if provider not in {"auto"}:
-        raise RuntimeError("Unsupported ASSISTANT_PROVIDER. Use auto, deepseek, or openai.")
+        raise RuntimeError("Unsupported ASSISTANT_PROVIDER. Use openai, auto, or deepseek.")
 
     if has_deepseek:
         try:
@@ -303,5 +310,5 @@ def run_personal_assistant(
         return run_openai_assistant(messages, user_id)
 
     raise RuntimeError(
-        "No assistant provider is configured. Set DEEPSEEK_API_KEY or OPENAI_API_KEY on the backend."
+        "No assistant provider is configured. Set ASSISTANT_PROVIDER=openai and add OPENAI_API_KEY on the backend."
     )

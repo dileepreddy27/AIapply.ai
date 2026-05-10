@@ -94,6 +94,17 @@ def _split_env_list(name: str, fallback: list[str]) -> list[str]:
     return [x.strip() for x in raw.split(",") if x.strip()]
 
 
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _premium_testing_enabled() -> bool:
+    return _env_flag("ENABLE_PREMIUM_TEST_MODE", True)
+
+
 def _load_import_jobs(path: Path, source: str) -> list[JobPosting]:
     if not path.exists():
         return []
@@ -703,6 +714,11 @@ def _resolve_subscription_state(
         raw_plan = "basic"
         raw_status = "inactive"
 
+    testing_mode = _premium_testing_enabled()
+    if testing_mode:
+        raw_plan = "pro"
+        raw_status = "testing"
+
     plan = get_plan_definition(raw_plan)
     assistant_prompts_used = _assistant_prompt_usage(sb, user_id)
     assistant_limit = plan.assistant_monthly_prompts
@@ -711,6 +727,7 @@ def _resolve_subscription_state(
         "plan": plan.key,
         "label": plan.label,
         "status": raw_status,
+        "testing_mode": testing_mode,
         "stripe_customer_id": stripe_customer_id,
         "manual_pro_access": manual_pro_access,
         "assistant_prompts_used": assistant_prompts_used,
@@ -1138,7 +1155,7 @@ def assistant_chat(
         )
     except requests.HTTPError as exc:
         detail = getattr(exc.response, "text", str(exc))
-        raise HTTPException(status_code=502, detail=f"DeepSeek request failed: {detail}")
+        raise HTTPException(status_code=502, detail=f"Assistant provider request failed: {detail}")
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 

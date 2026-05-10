@@ -43,7 +43,7 @@ PLAN_DEFINITIONS: dict[str, PlanDefinition] = {
         highlights=[
             "Resume-based job matching",
             "Target role, location, and company filters",
-            "DeepSeek assistant with limited monthly prompts",
+            "AI assistant with limited monthly prompts",
             "Application tracker and saved profile",
         ],
     ),
@@ -61,7 +61,7 @@ PLAN_DEFINITIONS: dict[str, PlanDefinition] = {
             "Everything in Basic",
             "Auto Apply on supported sources",
             "Continuous auto-apply scheduler eligibility",
-            "Unlimited DeepSeek assistant prompts",
+            "Unlimited AI assistant prompts",
             "Priority AI workflow features for cover letters, interviews, and follow-ups",
         ],
     ),
@@ -82,7 +82,7 @@ COMPETITIVE_ADVANTAGES = [
         "description": "Sector, country, state/province, salary, and Fortune ranking filters give tighter control than generic job-title-only workflows.",
     },
     {
-        "title": "DeepSeek personal assistant",
+        "title": "Personal assistant agent",
         "description": "One assistant handles planning, resume edits, cover letters, screening answers, interview prep, follow-ups, and tracking help.",
     },
     {
