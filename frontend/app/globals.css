@@ -219,6 +219,12 @@ button:disabled {
   margin-top: 0.1rem;
 }
 
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
 .feature-card {
   border: 1px solid var(--line);
   background: #fff;
@@ -228,6 +234,42 @@ button:disabled {
 
 .feature-card h3 {
   margin-top: 0;
+}
+
+.feature-box {
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 14px;
+  padding: 1rem;
+  min-height: 190px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  box-shadow: 0 14px 34px rgba(17, 44, 42, 0.06);
+}
+
+.feature-box h3 {
+  margin: 0.2rem 0 0.45rem;
+}
+
+.feature-box p {
+  color: var(--ink-soft);
+}
+
+.feature-kicker {
+  margin: 0;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--brand);
+}
+
+.feature-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  margin-top: 0.7rem;
 }
 
 .plain-list {
@@ -379,6 +421,63 @@ button:disabled {
   color: var(--ink);
 }
 
+.assistant-fab {
+  position: fixed;
+  right: 22px;
+  bottom: 22px;
+  width: 64px;
+  height: 64px;
+  border-radius: 18px;
+  box-shadow: 0 18px 36px rgba(13, 155, 117, 0.28);
+  z-index: 20;
+}
+
+.assistant-fab-icon {
+  font-size: 1.55rem;
+}
+
+.assistant-drawer {
+  position: fixed;
+  right: 22px;
+  bottom: 100px;
+  width: min(420px, calc(100vw - 28px));
+  max-height: calc(100vh - 140px);
+  overflow: auto;
+  border: 1px solid var(--line);
+  background: #ffffffee;
+  backdrop-filter: blur(10px);
+  border-radius: 20px;
+  padding: 1rem;
+  box-shadow: 0 24px 64px rgba(17, 44, 42, 0.16);
+  z-index: 19;
+}
+
+.assistant-drawer-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.8rem;
+  align-items: flex-start;
+  margin-bottom: 0.8rem;
+}
+
+.assistant-drawer-header h2 {
+  margin: 0.15rem 0;
+}
+
+.assistant-composer {
+  margin-top: 0.7rem;
+}
+
+.assistant-error {
+  margin: 0.7rem 0 0;
+  color: #916100;
+  background: #fff4d7;
+  border: 1px solid #f0d48a;
+  border-radius: 10px;
+  padding: 0.75rem 0.85rem;
+  line-height: 1.45;
+}
+
 .results-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
@@ -409,10 +508,19 @@ button:disabled {
 }
 
 @media (max-width: 820px) {
+  .feature-grid {
+    grid-template-columns: 1fr;
+  }
   .grid.two {
     grid-template-columns: 1fr;
   }
   .wide {
     grid-column: span 1;
+  }
+  .assistant-drawer {
+    left: 14px;
+    right: 14px;
+    bottom: 90px;
+    width: auto;
   }
 }

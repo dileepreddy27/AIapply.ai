@@ -156,7 +156,17 @@ def run_deepseek_assistant(
         json=payload,
         timeout=60,
     )
-    response.raise_for_status()
+    if response.status_code == 402:
+        raise RuntimeError(
+            "DeepSeek account balance is empty. Top up your DeepSeek API account or replace "
+            "DEEPSEEK_API_KEY with a funded key, then try the assistant again."
+        )
+    if not response.ok:
+        try:
+            detail = response.json()
+        except Exception:
+            detail = response.text
+        raise RuntimeError(f"DeepSeek request failed: {detail}")
     data = response.json()
     choices = data.get("choices") or []
     if not choices:
@@ -174,4 +184,3 @@ def run_deepseek_assistant(
     if not str(content).strip():
         raise RuntimeError("DeepSeek returned an empty assistant response.")
     return str(content).strip()
-

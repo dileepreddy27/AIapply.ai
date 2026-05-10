@@ -178,6 +178,9 @@ export default function DashboardPage() {
   const [assistantLoading, setAssistantLoading] = useState(false);
   const [assistantThread, setAssistantThread] = useState<AssistantThread | null>(null);
   const [assistantMessages, setAssistantMessages] = useState<AssistantMessage[]>([]);
+  const [assistantOpen, setAssistantOpen] = useState(false);
+  const [assistantError, setAssistantError] = useState("");
+  const [showApplications, setShowApplications] = useState(false);
 
   const selectedCountry = useMemo(
     () => profileOptions.countries.find((entry) => entry.label === country),
@@ -185,6 +188,7 @@ export default function DashboardPage() {
   );
   const availableRegions = selectedCountry?.regions ?? [];
   const autoApplyLocked = !subscription.features.can_auto_apply;
+  const recentApplications = useMemo(() => applications.slice(0, 6), [applications]);
 
   const canRunMatch = useMemo(() => !!token && !!resumeFile, [token, resumeFile]);
 
@@ -258,6 +262,14 @@ export default function DashboardPage() {
 
   function backendConfigMessage(): string {
     return "Backend URL is not configured. Set NEXT_PUBLIC_BACKEND_URL in Vercel env and redeploy.";
+  }
+
+  function humanizeAssistantError(text: string): string {
+    const normalized = text.toLowerCase();
+    if (normalized.includes("insufficient balance") || normalized.includes("balance is empty")) {
+      return "DeepSeek does not have available API credit right now. Top up the DeepSeek account or use a funded DEEPSEEK_API_KEY in Render, then reopen the assistant.";
+    }
+    return text;
   }
 
   async function authFetch(url: string, options?: RequestInit): Promise<Response> {
@@ -405,6 +417,7 @@ export default function DashboardPage() {
       if (data?.active_thread?.mode) {
         setAssistantMode(data.active_thread.mode);
       }
+      setAssistantError("");
     } catch (err) {
       console.error(err);
     }
@@ -539,6 +552,7 @@ export default function DashboardPage() {
       if (!res.ok) throw new Error(data?.detail ?? "Auto Apply failed.");
       await loadApplications();
       await loadSubscription();
+      setShowApplications(true);
       setMessage(
         data?.message ??
           `Auto Apply completed. Matched ${data.matched_jobs}, queued ${data.queued_applications}.`
@@ -595,15 +609,20 @@ export default function DashboardPage() {
       return;
     }
     if (!subscription.features.can_use_assistant) {
-      setMessage("Your plan does not include the Personal Assistant Agent.");
+      const detail = "Your plan does not include the Personal Assistant Agent.";
+      setAssistantError(detail);
+      setMessage(detail);
       return;
     }
     if (!assistantDraft.trim()) {
-      setMessage("Enter a message for the Personal Assistant.");
+      const detail = "Enter a message for the Personal Assistant.";
+      setAssistantError(detail);
+      setMessage(detail);
       return;
     }
 
     setAssistantLoading(true);
+    setAssistantError("");
     try {
       const res = await authFetch(`${backendUrl}/api/assistant/chat`, {
         method: "POST",
@@ -629,10 +648,13 @@ export default function DashboardPage() {
         }));
       }
       setAssistantDraft("");
+      setAssistantError("");
       setMessage("Personal Assistant response ready.");
     } catch (err) {
       const text = err instanceof Error ? err.message : "Assistant request failed.";
-      setMessage(text);
+      const detail = humanizeAssistantError(text);
+      setAssistantError(detail);
+      setMessage(detail);
     } finally {
       setAssistantLoading(false);
     }
@@ -642,6 +664,7 @@ export default function DashboardPage() {
     setAssistantThread(null);
     setAssistantMessages([]);
     setAssistantDraft("");
+    setAssistantError("");
   }
 
   async function signOut(): Promise<void> {
@@ -706,6 +729,68 @@ export default function DashboardPage() {
             </ul>
           </div>
         </div>
+      </section>
+
+      <section className="feature-grid">
+        <article className="feature-box">
+          <p className="feature-kicker">Basic Feature</p>
+          <h3>Job Match</h3>
+          <p>
+            Upload a resume, choose your role and location filters, and see matched jobs with
+            explainable scores.
+          </p>
+          <div className="feature-actions">
+            <button onClick={runMatch} disabled={!canRunMatch}>
+              Match Jobs
+            </button>
+          </div>
+        </article>
+
+        <article className="feature-box">
+          <p className="feature-kicker">{subscription.plan === "pro" ? "Pro Active" : "Pro Feature"}</p>
+          <h3>Auto Apply</h3>
+          <p>
+            {autoApplyLocked
+              ? "Available for Pro users only. Upgrade to unlock controlled application automation."
+              : "Run supported auto-apply flows using your saved profile, rules, and consent settings."}
+          </p>
+          <div className="feature-actions">
+            <button onClick={runAutoApply} disabled={autoApplyLocked}>
+              Run Auto Apply
+            </button>
+            <button onClick={() => setShowApplications((value) => !value)} className="ghost" type="button">
+              {showApplications ? "Hide Queue" : "View Queue"}
+            </button>
+          </div>
+        </article>
+
+        <article className="feature-box">
+          <p className="feature-kicker">Tracking</p>
+          <h3>Application Queue</h3>
+          <p>
+            {applicationsCount} saved application record{applicationsCount === 1 ? "" : "s"} in your
+            pipeline.
+          </p>
+          <div className="feature-actions">
+            <button onClick={() => void loadApplications()} className="ghost" type="button">
+              Refresh Queue
+            </button>
+          </div>
+        </article>
+
+        <article className="feature-box">
+          <p className="feature-kicker">DeepSeek Assistant</p>
+          <h3>Career Agent</h3>
+          <p>
+            Planning, resume edits, cover letters, screening answers, interview prep, and follow-up
+            help live in one assistant.
+          </p>
+          <div className="feature-actions">
+            <button type="button" onClick={() => setAssistantOpen(true)}>
+              Open Agent
+            </button>
+          </div>
+        </article>
       </section>
 
       <section className="panel">
@@ -1007,17 +1092,21 @@ export default function DashboardPage() {
           <button onClick={() => void loadApplications()} className="ghost" type="button">
             Refresh Applications
           </button>
+          <button onClick={() => setShowApplications((value) => !value)} className="ghost" type="button">
+            {showApplications ? "Hide Applications" : "Show Applications"}
+          </button>
         </div>
         <div className="applications-meta">
           <strong>{applicationsCount}</strong> application records found for your account.
         </div>
-        <div className="applications-list">
-          {applications.length === 0 ? (
+        {showApplications && (
+          <div className="applications-list">
+            {recentApplications.length === 0 ? (
             <p className="empty-state">
               No application records yet. When Auto Apply queues jobs, they will appear here.
             </p>
           ) : (
-            applications.map((application) => (
+            recentApplications.map((application) => (
               <article key={application.id} className="application-card">
                 <div className="application-topline">
                   <h3>{application.title || "Untitled role"}</h3>
@@ -1038,74 +1127,8 @@ export default function DashboardPage() {
               </article>
             ))
           )}
-        </div>
-      </section>
-
-      <section className="panel">
-        <h2>Personal Assistant Agent</h2>
-        <p>
-          Powered by DeepSeek, your assistant can help with planning, resume improvements, cover
-          letters, screening answers, interview prep, follow-up emails, and pipeline decisions.
-        </p>
-        <div className="grid two">
-          <label>
-            Assistant Mode
-            <select value={assistantMode} onChange={(e) => setAssistantMode(e.target.value)}>
-              {assistantModes.map((mode) => (
-                <option key={mode.value} value={mode.value}>
-                  {mode.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Plan Access
-            <input
-              value={
-                subscription.assistant_prompts_limit === null
-                  ? `${subscription.label} - unlimited prompts`
-                  : `${subscription.label} - ${subscription.assistant_prompts_remaining ?? 0} prompts remaining this month`
-              }
-              readOnly
-            />
-          </label>
-        </div>
-        <label className="wide">
-          Ask the Assistant
-          <textarea
-            rows={5}
-            value={assistantDraft}
-            onChange={(e) => setAssistantDraft(e.target.value)}
-            placeholder="Example: Build me a 2-week job search plan for backend engineer roles in the U.S. and help me improve my resume bullets."
-          />
-        </label>
-        <div className="inline-actions">
-          <button onClick={sendAssistantMessage} disabled={assistantLoading}>
-            {assistantLoading ? "Thinking..." : "Ask Assistant"}
-          </button>
-          <button onClick={resetAssistantConversation} className="ghost" type="button">
-            New Conversation
-          </button>
-        </div>
-        <div className="assistant-list">
-          {assistantMessages.length === 0 ? (
-            <p className="empty-state">
-              No assistant messages yet. Start with planning, resume edits, or interview prep.
-            </p>
-          ) : (
-            assistantMessages.map((item) => (
-              <article key={item.id} className={`assistant-card ${item.role}`}>
-                <div className="application-topline">
-                  <h3>{item.role === "assistant" ? "AIapply Assistant" : "You"}</h3>
-                  <span className="status-inline">
-                    {new Date(item.created_at).toLocaleString()}
-                  </span>
-                </div>
-                <p className="assistant-content">{item.content}</p>
-              </article>
-            ))
-          )}
-        </div>
+          </div>
+        )}
       </section>
 
       <section className="panel">
@@ -1136,6 +1159,88 @@ export default function DashboardPage() {
           </article>
         ))}
       </section>
+
+      <button
+        type="button"
+        className="assistant-fab"
+        onClick={() => setAssistantOpen((value) => !value)}
+        aria-label="Open AIapply assistant"
+      >
+        <span className="assistant-fab-icon" aria-hidden="true">🤖</span>
+      </button>
+
+      {assistantOpen && (
+        <aside className="assistant-drawer">
+          <div className="assistant-drawer-header">
+            <div>
+              <p className="brand">AIapply Agent</p>
+              <h2>Personal Assistant</h2>
+              <p className="status-inline">
+                {subscription.assistant_prompts_limit === null
+                  ? `${subscription.label} plan · unlimited prompts`
+                  : `${subscription.label} plan · ${subscription.assistant_prompts_remaining ?? 0} prompts left this month`}
+              </p>
+            </div>
+            <button type="button" className="ghost" onClick={() => setAssistantOpen(false)}>
+              Close
+            </button>
+          </div>
+
+          <div className="grid">
+            <label>
+              Assistant Mode
+              <select value={assistantMode} onChange={(e) => setAssistantMode(e.target.value)}>
+                {assistantModes.map((mode) => (
+                  <option key={mode.value} value={mode.value}>
+                    {mode.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          {assistantError && <p className="assistant-error">{assistantError}</p>}
+
+          <label className="assistant-composer">
+            Ask the Assistant
+            <textarea
+              rows={5}
+              value={assistantDraft}
+              onChange={(e) => setAssistantDraft(e.target.value)}
+              placeholder="Ask for a resume rewrite, interview prep, cover letter, follow-up email, or a job-search plan."
+            />
+          </label>
+
+          <div className="inline-actions">
+            <button onClick={sendAssistantMessage} disabled={assistantLoading}>
+              {assistantLoading ? "Thinking..." : "Ask Assistant"}
+            </button>
+            <button onClick={resetAssistantConversation} className="ghost" type="button">
+              New Conversation
+            </button>
+          </div>
+
+          <div className="assistant-list">
+            {assistantMessages.length === 0 ? (
+              <p className="empty-state">
+                No assistant messages yet. Start with planning, resume edits, or interview prep.
+              </p>
+            ) : (
+              assistantMessages.map((item) => (
+                <article key={item.id} className={`assistant-card ${item.role}`}>
+                  <div className="application-topline">
+                    <h3>{item.role === "assistant" ? "AIapply Assistant" : "You"}</h3>
+                    <span className="status-inline">
+                      {new Date(item.created_at).toLocaleString()}
+                    </span>
+                  </div>
+                  <p className="assistant-content">{item.content}</p>
+                </article>
+              ))
+            )}
+          </div>
+        </aside>
+      )}
     </main>
   );
 }
