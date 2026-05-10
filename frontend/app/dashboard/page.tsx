@@ -380,6 +380,9 @@ export default function DashboardPage() {
     if (normalized.includes("insufficient balance") || normalized.includes("balance is empty")) {
       return "The Anthropic assistant account does not have available billing or credit right now. Check Anthropic billing, redeploy if needed, and try again.";
     }
+    if (normalized.includes("model:") || normalized.includes("claude-sonnet-4-20250514")) {
+      return "Your ANTHROPIC_MODEL value in Render is likely malformed. Set it exactly to claude-sonnet-4-20250514 with no quotes, save, redeploy Render, and try again.";
+    }
     if (normalized.includes("quota") || normalized.includes("rate limit")) {
       return "The Anthropic assistant hit a quota, billing limit, or rate-limit issue. Check Anthropic billing and usage for the key configured in Render, then try again.";
     }

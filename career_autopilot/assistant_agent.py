@@ -7,6 +7,10 @@ from typing import Any
 import requests
 
 
+def _clean_env_value(value: str) -> str:
+    return value.replace('\n', '').replace('\r', '').replace('\t', '').replace('"', '').replace("'", '').strip()
+
+
 ASSISTANT_MODE_DETAILS: dict[str, dict[str, str]] = {
     "job_search_planning": {
         "label": "Job Search Planning",
@@ -155,11 +159,11 @@ def run_anthropic_assistant(
     messages: list[dict[str, str]],
     user_id: str,
 ) -> str:
-    api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+    api_key = _clean_env_value(os.getenv("ANTHROPIC_API_KEY", ""))
     if not api_key:
         raise RuntimeError("Anthropic is not configured. Set ANTHROPIC_API_KEY on the backend.")
 
-    model = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514").strip() or "claude-sonnet-4-20250514"
+    model = _clean_env_value(os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")) or "claude-sonnet-4-20250514"
     safe_user_id = re.sub(r"[^a-zA-Z0-9\-_]", "-", user_id)[:128] or "anonymous-user"
 
     system_prompt = "\n\n".join(

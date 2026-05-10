@@ -82,6 +82,7 @@ Set values in `.env`:
 - `RESEND_API_KEY`, `EMAIL_FROM` (optional, application confirmation emails)
 - `AUTO_APPLY_CRON_SECRET` (for scheduled continuous auto-apply runs)
 - `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` (assistant provider)
+  Use plain values with no quotes. Example: `ANTHROPIC_MODEL=claude-sonnet-4-20250514`
 
 Run backend API:
 
