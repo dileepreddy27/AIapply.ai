@@ -152,6 +152,317 @@ button:disabled {
   font-weight: 500;
 }
 
+.app-shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  background:
+    radial-gradient(circle at top right, rgba(25, 196, 158, 0.18), transparent 28%),
+    radial-gradient(circle at bottom left, rgba(17, 99, 93, 0.25), transparent 24%),
+    #071514;
+  color: #effff8;
+}
+
+.app-shell .brand {
+  color: #7cefd3;
+}
+
+.app-shell input,
+.app-shell select,
+.app-shell textarea {
+  border: 1px solid rgba(125, 213, 191, 0.18);
+  background: rgba(7, 24, 24, 0.72);
+  color: #effff8;
+}
+
+.app-shell input::placeholder,
+.app-shell textarea::placeholder {
+  color: rgba(217, 244, 236, 0.45);
+}
+
+.app-shell input:focus,
+.app-shell select:focus,
+.app-shell textarea:focus {
+  outline: 2px solid rgba(89, 223, 190, 0.25);
+  border-color: rgba(96, 234, 197, 0.66);
+}
+
+.app-shell button {
+  background: linear-gradient(135deg, #17b58f, #0f8f73);
+  color: #041513;
+}
+
+.app-shell button:disabled {
+  color: rgba(4, 21, 19, 0.6);
+}
+
+.app-shell .ghost {
+  background: rgba(7, 24, 24, 0.4);
+  color: #d9f4ec;
+  border: 1px solid rgba(125, 213, 191, 0.18);
+}
+
+.dashboard-sidebar {
+  padding: 1.25rem;
+  border-right: 1px solid rgba(125, 213, 191, 0.12);
+  background: rgba(5, 18, 18, 0.9);
+  display: grid;
+  gap: 1rem;
+  align-content: start;
+}
+
+.sidebar-brand h1 {
+  margin: 0.2rem 0 0.4rem;
+  font-size: 1.55rem;
+}
+
+.sidebar-copy {
+  margin: 0;
+  color: rgba(217, 244, 236, 0.7);
+  line-height: 1.5;
+}
+
+.sidebar-nav {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.sidebar-link {
+  display: block;
+  padding: 0.78rem 0.9rem;
+  border-radius: 14px;
+  color: #d9f4ec;
+  text-decoration: none;
+  background: rgba(9, 30, 30, 0.55);
+  border: 1px solid rgba(125, 213, 191, 0.1);
+}
+
+.sidebar-link:hover {
+  border-color: rgba(96, 234, 197, 0.34);
+  background: rgba(10, 39, 38, 0.84);
+}
+
+.sidebar-plan-card {
+  padding: 1rem;
+  border-radius: 20px;
+  background:
+    linear-gradient(180deg, rgba(9, 41, 40, 0.94), rgba(7, 24, 24, 0.98));
+  border: 1px solid rgba(125, 213, 191, 0.16);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.22);
+}
+
+.sidebar-plan-card h3 {
+  margin: 0.75rem 0 0.3rem;
+}
+
+.sidebar-plan-card p {
+  margin: 0 0 0.8rem;
+  color: rgba(217, 244, 236, 0.72);
+}
+
+.sidebar-signout {
+  width: 100%;
+}
+
+.dashboard-main {
+  padding: 1.3rem;
+  display: grid;
+  gap: 1rem;
+}
+
+.dashboard-topbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.dashboard-topbar h2 {
+  margin: 0.25rem 0;
+  font-size: 2rem;
+}
+
+.dashboard-topbar-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.topbar-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.48rem 0.82rem;
+  border-radius: 999px;
+  border: 1px solid rgba(125, 213, 191, 0.16);
+  background: rgba(9, 34, 33, 0.85);
+  color: #d9f4ec;
+  font-size: 0.84rem;
+}
+
+.status-banner {
+  padding: 0.9rem 1rem;
+  border-radius: 18px;
+  background: rgba(9, 34, 33, 0.88);
+  border: 1px solid rgba(125, 213, 191, 0.14);
+  color: #d9f4ec;
+}
+
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.85rem;
+}
+
+.metric-card {
+  padding: 1rem;
+  border-radius: 22px;
+  background:
+    linear-gradient(180deg, rgba(10, 38, 37, 0.96), rgba(5, 18, 18, 0.96));
+  border: 1px solid rgba(125, 213, 191, 0.14);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.22);
+}
+
+.metric-card strong {
+  display: block;
+  margin: 0.3rem 0;
+  font-size: 2rem;
+  color: #f3fffa;
+}
+
+.metric-card span,
+.metric-label {
+  color: rgba(217, 244, 236, 0.74);
+}
+
+.metric-label {
+  margin: 0;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(320px, 0.9fr);
+  gap: 1rem;
+}
+
+.dashboard-card {
+  padding: 1rem;
+  border-radius: 24px;
+  background:
+    linear-gradient(180deg, rgba(9, 34, 33, 0.96), rgba(5, 18, 18, 0.98));
+  border: 1px solid rgba(125, 213, 191, 0.14);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.2);
+}
+
+.dashboard-card-wide {
+  grid-column: span 2;
+}
+
+.dashboard-card h3,
+.dashboard-card h4 {
+  margin-top: 0;
+  color: #f3fffa;
+}
+
+.dashboard-card p,
+.dashboard-card li,
+.dashboard-card .status-inline,
+.app-shell .field-hint,
+.app-shell .empty-state {
+  color: rgba(217, 244, 236, 0.74);
+}
+
+.card-header-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+  margin-bottom: 1rem;
+}
+
+.dashboard-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.85rem;
+}
+
+.dashboard-field-wide {
+  grid-column: span 2;
+}
+
+.toggle-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.7rem;
+  margin-top: 0.9rem;
+}
+
+.toggle-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.85rem 0.95rem;
+  border-radius: 16px;
+  background: rgba(7, 24, 24, 0.62);
+  border: 1px solid rgba(125, 213, 191, 0.12);
+}
+
+.toggle-card span {
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.toggle-card input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+}
+
+.results-stack,
+.queue-preview-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.job-row-card,
+.queue-preview-card {
+  padding: 0.95rem;
+  border-radius: 18px;
+  background: rgba(7, 24, 24, 0.62);
+  border: 1px solid rgba(125, 213, 191, 0.12);
+}
+
+.job-row-card {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.job-row-card h4,
+.queue-preview-card h4 {
+  margin: 0 0 0.3rem;
+}
+
+.job-row-meta {
+  display: grid;
+  justify-items: end;
+  gap: 0.45rem;
+}
+
+.job-row-meta a {
+  color: #84f2d7;
+  font-weight: 700;
+}
+
+.queue-stat-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  margin-bottom: 0.85rem;
+}
+
 .dash-shell {
   max-width: 1040px;
   margin: 0 auto;
@@ -508,8 +819,29 @@ button:disabled {
 }
 
 @media (max-width: 820px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+  .dashboard-sidebar {
+    border-right: 0;
+    border-bottom: 1px solid rgba(125, 213, 191, 0.12);
+  }
+  .dashboard-topbar,
+  .card-header-row,
+  .job-row-card {
+    grid-template-columns: 1fr;
+    display: grid;
+  }
+  .metric-grid,
+  .dashboard-grid,
+  .dashboard-form-grid,
+  .toggle-grid,
   .feature-grid {
     grid-template-columns: 1fr;
+  }
+  .dashboard-card-wide,
+  .dashboard-field-wide {
+    grid-column: span 1;
   }
   .grid.two {
     grid-template-columns: 1fr;
