@@ -79,7 +79,7 @@ These are the differentiators implemented or structured in the product:
    - Restrict Auto Apply to Pro.
    - Keep approval rules, daily caps, company avoid-lists, and explicit consent in the profile model.
 
-3. DeepSeek personal assistant
+3. Anthropic Claude personal assistant
    - Add one assistant surface for:
      - planning
      - resume improvement
@@ -106,15 +106,15 @@ Position AIapply.ai as:
 
 This is stronger than competing only on "we auto-apply faster."
 
-## DeepSeek Fit
+## Anthropic Claude Fit
 
 Official sources:
-- [DeepSeek API quick start](https://api-docs.deepseek.com/)
-- [Create Chat Completion](https://api-docs.deepseek.com/api/create-chat-completion)
-- [Models and pricing](https://api-docs.deepseek.com/quick_start/pricing)
+- [Anthropic Messages API](https://docs.anthropic.com/en/api/messages)
+- [Anthropic models overview](https://docs.anthropic.com/en/docs/models-overview)
+- [Migrating to Claude 4](https://docs.anthropic.com/en/docs/about-claude/models/migrating-to-claude-4)
 
-Why DeepSeek fits this assistant:
-- OpenAI-compatible API shape
-- Tool-ready chat-completions interface
-- Large context and reasoning controls for multi-step career guidance
-- Lower-cost assistant workflows than many premium frontier APIs
+Why Anthropic Claude fits this assistant:
+- Strong long-form reasoning for career planning and resume guidance
+- Stable Messages API for multi-turn assistant workflows
+- Claude Sonnet 4 is a strong balance of quality and speed for assistant interactions
+- Clean system-prompt and conversation structure for profile-grounded guidance
