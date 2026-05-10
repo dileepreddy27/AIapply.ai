@@ -43,6 +43,51 @@ type ApplicationRecord = {
   notes?: string;
 };
 
+type SubscriptionFeatures = {
+  can_job_match: boolean;
+  can_auto_apply: boolean;
+  can_run_continuous_auto_apply: boolean;
+  can_use_assistant: boolean;
+  max_auto_apply_per_day: number;
+  assistant_modes: string[];
+  highlights: string[];
+};
+
+type SubscriptionState = {
+  plan: "basic" | "pro";
+  label: string;
+  status: string;
+  assistant_prompts_used: number;
+  assistant_prompts_limit: number | null;
+  assistant_prompts_remaining: number | null;
+  features: SubscriptionFeatures;
+};
+
+type CompetitiveAdvantage = {
+  title: string;
+  description: string;
+};
+
+type AssistantModeOption = {
+  value: string;
+  label: string;
+};
+
+type AssistantThread = {
+  id: number;
+  title: string;
+  mode: string;
+  updated_at: string;
+};
+
+type AssistantMessage = {
+  id: number;
+  thread_id: number;
+  role: "user" | "assistant" | "system";
+  content: string;
+  created_at: string;
+};
+
 function cleanPriceId(raw: string): string {
   return raw
     .replace(/\\n/g, "")
@@ -51,6 +96,26 @@ function cleanPriceId(raw: string): string {
     .replace(/"/g, "")
     .replace(/'/g, "")
     .trim();
+}
+
+function defaultSubscription(): SubscriptionState {
+  return {
+    plan: "basic",
+    label: "Basic",
+    status: "inactive",
+    assistant_prompts_used: 0,
+    assistant_prompts_limit: 20,
+    assistant_prompts_remaining: 20,
+    features: {
+      can_job_match: true,
+      can_auto_apply: false,
+      can_run_continuous_auto_apply: false,
+      can_use_assistant: true,
+      max_auto_apply_per_day: 0,
+      assistant_modes: [],
+      highlights: []
+    }
+  };
 }
 
 export default function DashboardPage() {
@@ -105,12 +170,21 @@ export default function DashboardPage() {
   });
   const [applications, setApplications] = useState<ApplicationRecord[]>([]);
   const [applicationsCount, setApplicationsCount] = useState(0);
+  const [subscription, setSubscription] = useState<SubscriptionState>(defaultSubscription());
+  const [competitiveAdvantages, setCompetitiveAdvantages] = useState<CompetitiveAdvantage[]>([]);
+  const [assistantModes, setAssistantModes] = useState<AssistantModeOption[]>([]);
+  const [assistantMode, setAssistantMode] = useState("job_search_planning");
+  const [assistantDraft, setAssistantDraft] = useState("");
+  const [assistantLoading, setAssistantLoading] = useState(false);
+  const [assistantThread, setAssistantThread] = useState<AssistantThread | null>(null);
+  const [assistantMessages, setAssistantMessages] = useState<AssistantMessage[]>([]);
 
   const selectedCountry = useMemo(
     () => profileOptions.countries.find((entry) => entry.label === country),
     [country, profileOptions.countries]
   );
   const availableRegions = selectedCountry?.regions ?? [];
+  const autoApplyLocked = !subscription.features.can_auto_apply;
 
   const canRunMatch = useMemo(() => !!token && !!resumeFile, [token, resumeFile]);
 
@@ -128,9 +202,11 @@ export default function DashboardPage() {
       setUserEmail(session.user.email ?? "");
       setLoading(false);
       await Promise.all([
+        loadSubscription(session.access_token),
         loadProfileOptions(session.access_token),
         loadProfile(session.access_token),
-        loadApplications(session.access_token)
+        loadApplications(session.access_token),
+        loadAssistantState(session.access_token)
       ]);
     }
     bootstrap();
@@ -162,6 +238,19 @@ export default function DashboardPage() {
       setRegion("");
     }
   }, [availableRegions, country, region]);
+
+  useEffect(() => {
+    if (autoApplyLocked && autoApplyEnabled) {
+      setAutoApplyEnabled(false);
+    }
+  }, [autoApplyEnabled, autoApplyLocked]);
+
+  useEffect(() => {
+    if (!assistantModes.length) return;
+    if (!assistantModes.some((mode) => mode.value === assistantMode)) {
+      setAssistantMode(assistantModes[0].value);
+    }
+  }, [assistantMode, assistantModes]);
 
   function isBackendConfigured(): boolean {
     return !!backendUrl && /^https?:\/\//.test(backendUrl);
@@ -216,6 +305,24 @@ export default function DashboardPage() {
           ? data.company_ranking_filters
           : []
       });
+      setAssistantModes(Array.isArray(data?.assistant_modes) ? data.assistant_modes : []);
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  async function loadSubscription(accessToken: string = token): Promise<void> {
+    try {
+      const res = await fetch(`${backendUrl}/api/subscription/me`, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+      const data = await res.json();
+      if (data?.subscription) {
+        setSubscription(data.subscription);
+      }
+      setCompetitiveAdvantages(
+        Array.isArray(data?.competitive_advantages) ? data.competitive_advantages : []
+      );
     } catch (err) {
       console.error(err);
     }
@@ -227,6 +334,9 @@ export default function DashboardPage() {
         headers: { Authorization: `Bearer ${accessToken}` }
       });
       const data = await res.json();
+      if (data?.subscription) {
+        setSubscription(data.subscription);
+      }
       const profile = data?.profile;
       if (!profile) return;
       setFullName(profile.full_name ?? "");
@@ -279,6 +389,27 @@ export default function DashboardPage() {
     }
   }
 
+  async function loadAssistantState(accessToken: string = token): Promise<void> {
+    if (!isBackendConfigured()) return;
+    try {
+      const res = await fetch(`${backendUrl}/api/assistant/me`, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+      const data = await res.json();
+      if (data?.subscription) {
+        setSubscription(data.subscription);
+      }
+      setAssistantModes(Array.isArray(data?.modes) ? data.modes : []);
+      setAssistantThread(data?.active_thread ?? null);
+      setAssistantMessages(Array.isArray(data?.messages) ? data.messages : []);
+      if (data?.active_thread?.mode) {
+        setAssistantMode(data.active_thread.mode);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
   async function saveProfile(): Promise<void> {
     if (!isBackendConfigured()) {
       setMessage(backendConfigMessage());
@@ -314,7 +445,7 @@ export default function DashboardPage() {
         preferred_locations: preferredLocations,
         willing_to_relocate: willingToRelocate,
         salary_expectation: salaryExpectation,
-        auto_apply_enabled: autoApplyEnabled,
+        auto_apply_enabled: subscription.features.can_auto_apply ? autoApplyEnabled : false,
         auto_apply_consent: autoApplyConsent,
         require_approval_before_apply: requireApprovalBeforeApply,
         company_ranking_filter: companyRankingFilter,
@@ -330,6 +461,9 @@ export default function DashboardPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.detail ?? "Could not save profile.");
+      if (data?.subscription) {
+        setSubscription(data.subscription);
+      }
       setMessage("Profile saved.");
     } catch (err) {
       const text = err instanceof Error ? err.message : "Profile update failed.";
@@ -387,6 +521,10 @@ export default function DashboardPage() {
       setMessage(backendConfigMessage());
       return;
     }
+    if (autoApplyLocked) {
+      setMessage("Auto Apply is available on the Pro plan. Upgrade to unlock hands-free applications.");
+      return;
+    }
     if (!autoApplyEnabled || !autoApplyConsent) {
       setMessage("Enable Auto Apply and consent before running auto apply.");
       return;
@@ -400,6 +538,7 @@ export default function DashboardPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data?.detail ?? "Auto Apply failed.");
       await loadApplications();
+      await loadSubscription();
       setMessage(
         data?.message ??
           `Auto Apply completed. Matched ${data.matched_jobs}, queued ${data.queued_applications}.`
@@ -413,6 +552,10 @@ export default function DashboardPage() {
   async function startCheckout(): Promise<void> {
     if (!isBackendConfigured()) {
       setMessage(backendConfigMessage());
+      return;
+    }
+    if (subscription.plan === "pro" && subscription.status !== "inactive") {
+      setMessage("This account already has Pro access.");
       return;
     }
     if (!priceId) {
@@ -446,6 +589,61 @@ export default function DashboardPage() {
     }
   }
 
+  async function sendAssistantMessage(): Promise<void> {
+    if (!isBackendConfigured()) {
+      setMessage(backendConfigMessage());
+      return;
+    }
+    if (!subscription.features.can_use_assistant) {
+      setMessage("Your plan does not include the Personal Assistant Agent.");
+      return;
+    }
+    if (!assistantDraft.trim()) {
+      setMessage("Enter a message for the Personal Assistant.");
+      return;
+    }
+
+    setAssistantLoading(true);
+    try {
+      const res = await authFetch(`${backendUrl}/api/assistant/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: assistantMode,
+          message: assistantDraft,
+          thread_id: assistantThread?.id ?? null
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.detail ?? "Assistant request failed.");
+      if (data?.subscription) {
+        setSubscription(data.subscription);
+      }
+      setAssistantMessages(Array.isArray(data?.messages) ? data.messages : []);
+      if (data?.thread_id) {
+        setAssistantThread((prev) => ({
+          id: Number(data.thread_id),
+          title: prev?.title ?? "Career Assistant",
+          mode: assistantMode,
+          updated_at: new Date().toISOString()
+        }));
+      }
+      setAssistantDraft("");
+      setMessage("Personal Assistant response ready.");
+    } catch (err) {
+      const text = err instanceof Error ? err.message : "Assistant request failed.";
+      setMessage(text);
+    } finally {
+      setAssistantLoading(false);
+    }
+  }
+
+  function resetAssistantConversation(): void {
+    setAssistantThread(null);
+    setAssistantMessages([]);
+    setAssistantDraft("");
+  }
+
   async function signOut(): Promise<void> {
     await supabase.auth.signOut();
     router.push("/");
@@ -465,11 +663,50 @@ export default function DashboardPage() {
         <div>
           <p className="brand">AIapply.ai Dashboard</p>
           <h1>{userEmail}</h1>
+          <div className="plan-row">
+            <span className={`plan-pill ${subscription.plan}`}>{subscription.label}</span>
+            <span className="status-inline">Status: {subscription.status.replace(/_/g, " ")}</span>
+          </div>
         </div>
         <button onClick={signOut} className="ghost">
           Sign Out
         </button>
       </header>
+
+      <section className="panel">
+        <h2>Subscription and Platform Edge</h2>
+        <div className="grid two">
+          <div className="feature-card">
+            <h3>{subscription.label} Plan</h3>
+            <p>
+              {subscription.plan === "pro"
+                ? "Pro unlocks hands-free automation and unlimited assistant support."
+                : "Basic includes matching, tracking, and assistant guidance. Upgrade when you want automation."}
+            </p>
+            <ul className="plain-list">
+              {subscription.features.highlights.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+            {subscription.assistant_prompts_limit !== null && (
+              <p className="field-hint">
+                Assistant prompts used this month: {subscription.assistant_prompts_used}/
+                {subscription.assistant_prompts_limit}
+              </p>
+            )}
+          </div>
+          <div className="feature-card">
+            <h3>Competitive Advantages</h3>
+            <ul className="plain-list">
+              {competitiveAdvantages.map((item) => (
+                <li key={item.title}>
+                  <strong>{item.title}:</strong> {item.description}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      </section>
 
       <section className="panel">
         <h2>Profile and Application Preferences</h2>
@@ -675,14 +912,19 @@ export default function DashboardPage() {
             <input
               type="checkbox"
               checked={autoApplyEnabled}
+              disabled={autoApplyLocked}
               onChange={(e) => setAutoApplyEnabled(e.target.checked)}
             />
+            {autoApplyLocked && (
+              <span className="field-hint">Upgrade to Pro to enable Auto Apply.</span>
+            )}
           </label>
           <label>
             Consent to Use Profile Data for Auto Apply
             <input
               type="checkbox"
               checked={autoApplyConsent}
+              disabled={autoApplyLocked}
               onChange={(e) => setAutoApplyConsent(e.target.checked)}
             />
           </label>
@@ -691,6 +933,7 @@ export default function DashboardPage() {
             <input
               type="checkbox"
               checked={requireApprovalBeforeApply}
+              disabled={autoApplyLocked}
               onChange={(e) => setRequireApprovalBeforeApply(e.target.checked)}
             />
           </label>
@@ -709,6 +952,7 @@ export default function DashboardPage() {
               min="1"
               max="50"
               value={maxApplicationsPerDay}
+              disabled={autoApplyLocked}
               onChange={(e) => setMaxApplicationsPerDay(e.target.value)}
             />
           </label>
@@ -719,6 +963,7 @@ export default function DashboardPage() {
               min="0"
               max="100"
               value={minimumMatchScore}
+              disabled={autoApplyLocked}
               onChange={(e) => setMinimumMatchScore(e.target.value)}
             />
           </label>
@@ -749,8 +994,16 @@ export default function DashboardPage() {
           Auto Apply uses your saved profile and explicit consent settings to queue supported
           applications.
         </p>
+        {autoApplyLocked && (
+          <p className="locked-note">
+            Auto Apply is a Pro feature. Basic users can still run Job Match, track applications,
+            and use the assistant to prepare stronger materials before upgrading.
+          </p>
+        )}
         <div className="inline-actions">
-          <button onClick={runAutoApply}>Run Auto Apply</button>
+          <button onClick={runAutoApply} disabled={autoApplyLocked}>
+            Run Auto Apply
+          </button>
           <button onClick={() => void loadApplications()} className="ghost" type="button">
             Refresh Applications
           </button>
@@ -789,9 +1042,81 @@ export default function DashboardPage() {
       </section>
 
       <section className="panel">
+        <h2>Personal Assistant Agent</h2>
+        <p>
+          Powered by DeepSeek, your assistant can help with planning, resume improvements, cover
+          letters, screening answers, interview prep, follow-up emails, and pipeline decisions.
+        </p>
+        <div className="grid two">
+          <label>
+            Assistant Mode
+            <select value={assistantMode} onChange={(e) => setAssistantMode(e.target.value)}>
+              {assistantModes.map((mode) => (
+                <option key={mode.value} value={mode.value}>
+                  {mode.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Plan Access
+            <input
+              value={
+                subscription.assistant_prompts_limit === null
+                  ? `${subscription.label} - unlimited prompts`
+                  : `${subscription.label} - ${subscription.assistant_prompts_remaining ?? 0} prompts remaining this month`
+              }
+              readOnly
+            />
+          </label>
+        </div>
+        <label className="wide">
+          Ask the Assistant
+          <textarea
+            rows={5}
+            value={assistantDraft}
+            onChange={(e) => setAssistantDraft(e.target.value)}
+            placeholder="Example: Build me a 2-week job search plan for backend engineer roles in the U.S. and help me improve my resume bullets."
+          />
+        </label>
+        <div className="inline-actions">
+          <button onClick={sendAssistantMessage} disabled={assistantLoading}>
+            {assistantLoading ? "Thinking..." : "Ask Assistant"}
+          </button>
+          <button onClick={resetAssistantConversation} className="ghost" type="button">
+            New Conversation
+          </button>
+        </div>
+        <div className="assistant-list">
+          {assistantMessages.length === 0 ? (
+            <p className="empty-state">
+              No assistant messages yet. Start with planning, resume edits, or interview prep.
+            </p>
+          ) : (
+            assistantMessages.map((item) => (
+              <article key={item.id} className={`assistant-card ${item.role}`}>
+                <div className="application-topline">
+                  <h3>{item.role === "assistant" ? "AIapply Assistant" : "You"}</h3>
+                  <span className="status-inline">
+                    {new Date(item.created_at).toLocaleString()}
+                  </span>
+                </div>
+                <p className="assistant-content">{item.content}</p>
+              </article>
+            ))
+          )}
+        </div>
+      </section>
+
+      <section className="panel">
         <h2>Upgrade</h2>
-        <p>Purchase Pro to unlock unlimited matching and premium automations.</p>
-        <button onClick={startCheckout}>Buy Pro</button>
+        <p>
+          Purchase Pro to unlock Auto Apply, continuous automation eligibility, and unlimited
+          DeepSeek assistant support.
+        </p>
+        <button onClick={startCheckout} disabled={subscription.plan === "pro" && subscription.status !== "inactive"}>
+          {subscription.plan === "pro" && subscription.status !== "inactive" ? "Pro Active" : "Buy Pro"}
+        </button>
       </section>
 
       {message && <p className="status">{message}</p>}

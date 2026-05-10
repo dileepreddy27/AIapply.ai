@@ -17,8 +17,15 @@ import requests
 import stripe
 from supabase import Client, create_client
 
+from .assistant_agent import (
+    assistant_mode_options,
+    build_assistant_messages,
+    create_thread_title,
+    run_deepseek_assistant,
+)
 from .models import JobPosting
 from .profile_options import company_matches_ranking, get_profile_option_payload
+from .plans import ACTIVE_SUBSCRIPTION_STATUSES, COMPETITIVE_ADVANTAGES, get_plan_definition, normalize_plan
 from .rag import MatchResult, recommend_jobs_rag, role_suggestions
 from .role_catalog import get_roles_for_sector
 from .scanners import scan_greenhouse, scan_lever
@@ -516,6 +523,12 @@ class AutoApplyRequest(BaseModel):
     max_jobs: int = 8
 
 
+class AssistantChatRequest(BaseModel):
+    mode: str = "job_search_planning"
+    message: str
+    thread_id: int | None = None
+
+
 def _count_today_applications(sb: Client, user_id: str) -> int:
     today = datetime.now(timezone.utc).date().isoformat()
     try:
@@ -532,6 +545,123 @@ def _count_today_applications(sb: Client, user_id: str) -> int:
         return 0
 
 
+def _fetch_profile_row(sb: Client, user_id: str) -> dict[str, Any] | None:
+    resp = sb.table("profiles").select("*").eq("id", user_id).limit(1).execute()
+    rows = getattr(resp, "data", []) or []
+    return rows[0] if rows else None
+
+
+def _latest_paid_payment_exists(sb: Client, user_id: str) -> bool:
+    try:
+        resp = (
+            sb.table("payments")
+            .select("id,status")
+            .eq("user_id", user_id)
+            .order("created_at", desc=True)
+            .limit(10)
+            .execute()
+        )
+    except Exception:
+        return False
+    rows = getattr(resp, "data", []) or []
+    paid_statuses = {"paid", "active", "complete", "succeeded"}
+    return any(str(row.get("status", "")).lower() in paid_statuses for row in rows)
+
+
+def _subscription_row(sb: Client, user_id: str) -> dict[str, Any] | None:
+    try:
+        resp = (
+            sb.table("subscriptions")
+            .select("*")
+            .eq("user_id", user_id)
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+    except Exception:
+        return None
+    rows = getattr(resp, "data", []) or []
+    return rows[0] if rows else None
+
+
+def _assistant_prompt_usage(sb: Client, user_id: str) -> int:
+    start_of_month = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    try:
+        resp = (
+            sb.table("assistant_messages")
+            .select("id", count="exact")
+            .eq("user_id", user_id)
+            .eq("role", "user")
+            .gte("created_at", start_of_month.isoformat())
+            .execute()
+        )
+    except Exception:
+        return 0
+    return int(getattr(resp, "count", 0) or 0)
+
+
+def _resolve_subscription_state(
+    sb: Client,
+    user_id: str,
+    profile: dict[str, Any] | None,
+) -> dict[str, Any]:
+    row = profile or {}
+    manual_pro_access = bool(row.get("manual_pro_access"))
+    raw_plan_value = str(row.get("plan", "") or "").strip()
+    raw_plan = normalize_plan(raw_plan_value or "basic")
+    raw_status = str(row.get("plan_status", "inactive") or "inactive").strip().lower()
+    stripe_customer_id = str(row.get("stripe_customer_id", "") or "").strip()
+
+    subscription = _subscription_row(sb, user_id)
+    if subscription:
+        stripe_customer_id = stripe_customer_id or str(subscription.get("stripe_customer_id", "") or "").strip()
+        subscription_status = str(subscription.get("status", "") or "").strip().lower()
+        if subscription_status in ACTIVE_SUBSCRIPTION_STATUSES:
+            raw_plan = "pro"
+            raw_status = subscription_status
+
+    if manual_pro_access:
+        raw_plan = "pro"
+        raw_status = "manual"
+    elif raw_plan == "pro" and raw_status in ACTIVE_SUBSCRIPTION_STATUSES:
+        pass
+    elif not raw_plan_value and _latest_paid_payment_exists(sb, user_id):
+        raw_plan = "pro"
+        raw_status = "paid"
+    else:
+        raw_plan = "basic"
+        raw_status = "inactive"
+
+    plan = get_plan_definition(raw_plan)
+    assistant_prompts_used = _assistant_prompt_usage(sb, user_id)
+    assistant_limit = plan.assistant_monthly_prompts
+    assistant_remaining = None if assistant_limit is None else max(0, assistant_limit - assistant_prompts_used)
+    return {
+        "plan": plan.key,
+        "label": plan.label,
+        "status": raw_status,
+        "stripe_customer_id": stripe_customer_id,
+        "manual_pro_access": manual_pro_access,
+        "assistant_prompts_used": assistant_prompts_used,
+        "assistant_prompts_limit": assistant_limit,
+        "assistant_prompts_remaining": assistant_remaining,
+        "features": {
+            "can_job_match": plan.can_job_match,
+            "can_auto_apply": plan.can_auto_apply,
+            "can_run_continuous_auto_apply": plan.can_run_continuous_auto_apply,
+            "can_use_assistant": plan.can_use_assistant,
+            "max_auto_apply_per_day": plan.max_auto_apply_per_day,
+            "assistant_modes": plan.assistant_modes,
+            "highlights": plan.highlights,
+        },
+    }
+
+
+def _require_feature(subscription: dict[str, Any], feature: str, detail: str) -> None:
+    if not bool(subscription.get("features", {}).get(feature)):
+        raise HTTPException(status_code=403, detail=detail)
+
+
 def _run_auto_apply_for_profile(
     sb: Client,
     user_id: str,
@@ -539,6 +669,7 @@ def _run_auto_apply_for_profile(
     profile: dict[str, Any],
     role_query: str,
     max_jobs: int | None = None,
+    plan_max_auto_apply_per_day: int | None = None,
 ) -> dict[str, Any]:
     app_profile = profile.get("application_profile") or {}
     auto_enabled = bool(app_profile.get("auto_apply_enabled"))
@@ -553,6 +684,8 @@ def _run_auto_apply_for_profile(
         )
 
     daily_cap = max(1, min(int(app_profile.get("max_applications_per_day", 10) or 10), 50))
+    if plan_max_auto_apply_per_day is not None and plan_max_auto_apply_per_day > 0:
+        daily_cap = min(daily_cap, plan_max_auto_apply_per_day)
     if max_jobs is not None:
         daily_cap = min(daily_cap, max(1, min(max_jobs, 50)))
 
@@ -661,7 +794,9 @@ def search_roles(q: str = "", sector: str = "") -> dict[str, Any]:
 
 @app.get("/api/profile/options")
 def get_profile_options() -> dict[str, Any]:
-    return get_profile_option_payload()
+    payload = get_profile_option_payload()
+    payload["assistant_modes"] = assistant_mode_options()
+    return payload
 
 
 @app.post("/api/profile/upsert")
@@ -671,6 +806,9 @@ def upsert_profile(
     user = _current_user(authorization)
     user_id = _user_id_from_user(user)
     sb = _supabase()
+    existing_profile = _fetch_profile_row(sb, user_id)
+    subscription = _resolve_subscription_state(sb, user_id, existing_profile)
+    auto_apply_enabled = body.auto_apply_enabled if subscription["features"]["can_auto_apply"] else False
     payload = {
         "id": user_id,
         "email": user.get("email", ""),
@@ -695,7 +833,7 @@ def upsert_profile(
             "preferred_locations": body.preferred_locations,
             "willing_to_relocate": body.willing_to_relocate,
             "salary_expectation": body.salary_expectation,
-            "auto_apply_enabled": body.auto_apply_enabled,
+            "auto_apply_enabled": auto_apply_enabled,
             "auto_apply_consent": body.auto_apply_consent,
             "require_approval_before_apply": body.require_approval_before_apply,
             "work_preferences": body.work_preferences,
@@ -719,7 +857,7 @@ def upsert_profile(
                 raise HTTPException(status_code=500, detail=f"Failed to upsert profile: {legacy_exc}")
         else:
             raise HTTPException(status_code=500, detail=f"Failed to upsert profile: {exc}")
-    return {"ok": True, "profile": payload}
+    return {"ok": True, "profile": payload, "subscription": subscription}
 
 
 @app.get("/api/profile/me")
@@ -732,7 +870,20 @@ def get_profile(authorization: str | None = Header(default=None)) -> dict[str, A
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to fetch profile: {exc}")
     rows = getattr(resp, "data", []) or []
-    return {"profile": rows[0] if rows else None}
+    profile = rows[0] if rows else None
+    return {"profile": profile, "subscription": _resolve_subscription_state(sb, user_id, profile)}
+
+
+@app.get("/api/subscription/me")
+def get_subscription(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _current_user(authorization)
+    user_id = _user_id_from_user(user)
+    sb = _supabase()
+    profile = _fetch_profile_row(sb, user_id)
+    return {
+        "subscription": _resolve_subscription_state(sb, user_id, profile),
+        "competitive_advantages": COMPETITIVE_ADVANTAGES,
+    }
 
 
 @app.get("/api/applications/me")
@@ -753,6 +904,200 @@ def get_applications(authorization: str | None = Header(default=None)) -> dict[s
         raise HTTPException(status_code=500, detail=f"Failed to fetch applications: {exc}")
     rows = getattr(resp, "data", []) or []
     return {"applications": rows, "count": int(getattr(resp, "count", 0) or 0)}
+
+
+def _latest_assistant_thread(sb: Client, user_id: str) -> dict[str, Any] | None:
+    try:
+        resp = (
+            sb.table("assistant_threads")
+            .select("*")
+            .eq("user_id", user_id)
+            .order("updated_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        rows = getattr(resp, "data", []) or []
+        return rows[0] if rows else None
+    except Exception:
+        return None
+
+
+def _assistant_messages_for_thread(sb: Client, user_id: str, thread_id: int) -> list[dict[str, Any]]:
+    try:
+        resp = (
+            sb.table("assistant_messages")
+            .select("*")
+            .eq("user_id", user_id)
+            .eq("thread_id", thread_id)
+            .order("created_at")
+            .limit(30)
+            .execute()
+        )
+        return getattr(resp, "data", []) or []
+    except Exception:
+        return []
+
+
+@app.get("/api/assistant/me")
+def get_assistant_state(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _current_user(authorization)
+    user_id = _user_id_from_user(user)
+    sb = _supabase()
+    profile = _fetch_profile_row(sb, user_id)
+    subscription = _resolve_subscription_state(sb, user_id, profile)
+    latest_thread = _latest_assistant_thread(sb, user_id)
+    messages: list[dict[str, Any]] = []
+    if latest_thread:
+        messages = _assistant_messages_for_thread(sb, user_id, int(latest_thread["id"]))
+    return {
+        "subscription": subscription,
+        "modes": assistant_mode_options(),
+        "active_thread": latest_thread,
+        "messages": messages,
+    }
+
+
+@app.post("/api/assistant/chat")
+def assistant_chat(
+    body: AssistantChatRequest,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    user = _current_user(authorization)
+    user_id = _user_id_from_user(user)
+    sb = _supabase()
+    profile = _fetch_profile_row(sb, user_id)
+    subscription = _resolve_subscription_state(sb, user_id, profile)
+    _require_feature(
+        subscription,
+        "can_use_assistant",
+        "Your plan does not include the Personal Assistant Agent.",
+    )
+
+    limit = subscription.get("assistant_prompts_limit")
+    remaining = subscription.get("assistant_prompts_remaining")
+    if limit is not None and isinstance(remaining, int) and remaining <= 0:
+        raise HTTPException(
+            status_code=403,
+            detail="You have used all Personal Assistant prompts for this month. Upgrade to Pro for unlimited access.",
+        )
+
+    user_message = body.message.strip()
+    if not user_message:
+        raise HTTPException(status_code=400, detail="Assistant message cannot be empty.")
+
+    mode = body.mode.strip() or "job_search_planning"
+    valid_modes = {item["value"] for item in assistant_mode_options()}
+    if mode not in valid_modes:
+        raise HTTPException(status_code=400, detail="Unsupported assistant mode.")
+
+    thread_id = body.thread_id
+    thread: dict[str, Any] | None = None
+    if thread_id is not None:
+        thread_resp = (
+            sb.table("assistant_threads")
+            .select("*")
+            .eq("id", thread_id)
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+        thread_rows = getattr(thread_resp, "data", []) or []
+        thread = thread_rows[0] if thread_rows else None
+        if thread is None:
+            raise HTTPException(status_code=404, detail="Assistant thread not found.")
+    else:
+        try:
+            insert_resp = (
+                sb.table("assistant_threads")
+                .insert(
+                    {
+                        "user_id": user_id,
+                        "mode": mode,
+                        "title": create_thread_title(mode, user_message),
+                    }
+                )
+                .execute()
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Assistant storage is not ready. Run the latest Supabase schema migration first. ({exc})",
+            )
+        inserted_rows = getattr(insert_resp, "data", []) or []
+        thread = inserted_rows[0] if inserted_rows else None
+        if thread is None:
+            raise HTTPException(status_code=500, detail="Failed to create assistant thread.")
+        thread_id = int(thread["id"])
+
+    history_rows = _assistant_messages_for_thread(sb, user_id, int(thread_id))
+    history = [
+        {"role": str(item.get("role", "")), "content": str(item.get("content", ""))}
+        for item in history_rows
+    ]
+
+    try:
+        sb.table("assistant_messages").insert(
+            {
+                "thread_id": thread_id,
+                "user_id": user_id,
+                "role": "user",
+                "content": user_message,
+                "metadata": {"mode": mode},
+            }
+        ).execute()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Assistant message storage is not ready. Run the latest Supabase schema migration first. ({exc})",
+        )
+
+    try:
+        assistant_text = run_deepseek_assistant(
+            build_assistant_messages(
+                mode=mode,
+                profile=profile,
+                history=history,
+                latest_user_message=user_message,
+                plan_label=str(subscription.get("label", "Basic")),
+            ),
+            user_id=user_id,
+        )
+    except requests.HTTPError as exc:
+        detail = getattr(exc.response, "text", str(exc))
+        raise HTTPException(status_code=502, detail=f"DeepSeek request failed: {detail}")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    try:
+        sb.table("assistant_messages").insert(
+            {
+                "thread_id": thread_id,
+                "user_id": user_id,
+                "role": "assistant",
+                "content": assistant_text,
+                "metadata": {"mode": mode},
+            }
+        ).execute()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Assistant response storage is not ready. Run the latest Supabase schema migration first. ({exc})",
+        )
+    try:
+        sb.table("assistant_threads").update({"updated_at": datetime.now(timezone.utc).isoformat()}).eq(
+            "id", thread_id
+        ).eq("user_id", user_id).execute()
+    except Exception:
+        pass
+
+    refreshed_subscription = _resolve_subscription_state(sb, user_id, profile)
+    messages = _assistant_messages_for_thread(sb, user_id, int(thread_id))
+    return {
+        "thread_id": thread_id,
+        "subscription": refreshed_subscription,
+        "messages": messages,
+        "assistant_message": assistant_text,
+    }
 
 
 @app.post("/api/rag/match")
@@ -853,6 +1198,12 @@ def create_checkout(
     body: CheckoutRequest, authorization: str | None = Header(default=None)
 ) -> dict[str, Any]:
     user = _current_user(authorization)
+    user_id = _user_id_from_user(user)
+    sb = _supabase()
+    profile = _fetch_profile_row(sb, user_id)
+    subscription = _resolve_subscription_state(sb, user_id, profile)
+    if subscription["plan"] == "pro" and subscription["status"] in ACTIVE_SUBSCRIPTION_STATUSES:
+        raise HTTPException(status_code=400, detail="This account already has active Pro access.")
     _stripe_config()
     cleaned_price_id = _clean_price_id(body.price_id)
     if not cleaned_price_id.startswith("price_"):
@@ -863,9 +1214,10 @@ def create_checkout(
             line_items=[{"price": cleaned_price_id, "quantity": 1}],
             success_url=body.success_url,
             cancel_url=body.cancel_url,
-            client_reference_id=str(user.get("id", "")),
+            client_reference_id=str(user_id),
             customer_email=str(user.get("email", "")),
             allow_promotion_codes=True,
+            metadata={"plan": "pro", "price_id": cleaned_price_id},
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Stripe checkout failed: {exc}")
@@ -880,11 +1232,15 @@ def auto_apply_run(
     user_id = _user_id_from_user(user)
     sb = _supabase()
 
-    profile_resp = sb.table("profiles").select("*").eq("id", user_id).limit(1).execute()
-    rows = getattr(profile_resp, "data", []) or []
-    if not rows:
+    profile = _fetch_profile_row(sb, user_id)
+    if not profile:
         raise HTTPException(status_code=400, detail="Profile not found. Save profile first.")
-    profile = rows[0]
+    subscription = _resolve_subscription_state(sb, user_id, profile)
+    _require_feature(
+        subscription,
+        "can_auto_apply",
+        "Auto Apply is available on the Pro plan. Upgrade to unlock hands-free applications.",
+    )
     role_query = (body.custom_role.strip() if body.role == "custom" else body.role.strip()) or profile.get(
         "target_role", ""
     )
@@ -896,6 +1252,7 @@ def auto_apply_run(
         profile=profile,
         role_query=role_query,
         max_jobs=max_jobs,
+        plan_max_auto_apply_per_day=int(subscription["features"]["max_auto_apply_per_day"]),
     )
 
 
@@ -927,12 +1284,16 @@ def auto_apply_tick(x_auto_apply_secret: str | None = Header(default=None)) -> d
             continue
 
         try:
+            subscription = _resolve_subscription_state(sb, user_id, profile)
+            if not bool(subscription.get("features", {}).get("can_run_continuous_auto_apply")):
+                continue
             result = _run_auto_apply_for_profile(
                 sb=sb,
                 user_id=user_id,
                 user_email=user_email,
                 profile=profile,
                 role_query=role_query,
+                plan_max_auto_apply_per_day=int(subscription["features"]["max_auto_apply_per_day"]),
             )
             processed += 1
             queued += int(result.get("queued_applications", 0))
@@ -974,9 +1335,37 @@ async def stripe_webhook(request: Request) -> dict[str, Any]:
                         "status": checkout.get("payment_status", "unknown"),
                         "amount_total": checkout.get("amount_total"),
                         "currency": checkout.get("currency"),
+                        "price_id": ((checkout.get("metadata") or {}).get("price_id", "")),
+                        "mode": checkout.get("mode", ""),
                     }
                 ).execute()
             except Exception:
                 pass
+            try:
+                sb.table("profiles").upsert(
+                    {
+                        "id": user_id,
+                        "email": checkout.get("customer_details", {}).get("email", ""),
+                        "plan": "pro",
+                        "plan_status": "active",
+                        "stripe_customer_id": checkout.get("customer", ""),
+                    }
+                ).execute()
+            except Exception:
+                pass
+            subscription_id = checkout.get("subscription")
+            if subscription_id:
+                try:
+                    sb.table("subscriptions").upsert(
+                        {
+                            "user_id": user_id,
+                            "stripe_customer_id": checkout.get("customer", ""),
+                            "stripe_subscription_id": subscription_id,
+                            "stripe_price_id": ((checkout.get("metadata") or {}).get("price_id", "")),
+                            "status": "active",
+                        }
+                    ).execute()
+                except Exception:
+                    pass
 
     return {"received": True}

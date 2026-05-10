@@ -6,7 +6,9 @@ Full-stack job platform with:
 - backend on **Render** (FastAPI),
 - auth/data on **Supabase**,
 - payments via **Stripe Checkout**,
-- role-based resume matching with a **RAG-style retrieval layer**.
+- role-based resume matching with a **RAG-style retrieval layer**,
+- a **Basic vs Pro** entitlement model,
+- a **DeepSeek-powered Personal Assistant Agent**.
 
 ## Architecture
 
@@ -22,7 +24,10 @@ backend (FastAPI / Render)
   - /api/roles/search
   - /api/profile/upsert
   - /api/profile/me
+  - /api/subscription/me
   - /api/rag/match
+  - /api/assistant/me
+  - /api/assistant/chat
   - /api/auto-apply/run
   - /api/auto-apply/tick
   - /api/payments/checkout
@@ -76,6 +81,7 @@ Set values in `.env`:
 - `LIVE_GREENHOUSE_BOARDS`, `LIVE_LEVER_SITES` (optional, live job discovery sources)
 - `RESEND_API_KEY`, `EMAIL_FROM` (optional, application confirmation emails)
 - `AUTO_APPLY_CRON_SECRET` (for scheduled continuous auto-apply runs)
+- `DEEPSEEK_API_KEY`, `DEEPSEEK_MODEL`, `DEEPSEEK_BASE_URL` (for the Personal Assistant Agent)
 
 Run backend API:
 
@@ -161,10 +167,33 @@ Open:
   - profile storage in Supabase,
   - extended application profile fields (authorization, sponsorship, optional sensitive fields),
   - dynamic role suggestions from Google Form/Sheet CSV (if configured),
+  - sector, country/region, and Fortune-ranking filters,
   - resume upload,
   - role-based matching with live discovery fallback,
-  - Auto Apply queue with explicit consent and daily limits,
+  - Basic vs Pro subscription gating,
+  - DeepSeek Personal Assistant Agent,
+  - Auto Apply queue with explicit consent and daily limits for Pro users,
   - Stripe checkout button.
+
+## Plans
+
+### Basic
+
+- Resume-based job matching
+- Profile + targeting filters
+- Application tracker
+- DeepSeek assistant with a monthly prompt allowance
+
+### Pro
+
+- Everything in Basic
+- Auto Apply on supported sources
+- Continuous automation eligibility via `/api/auto-apply/tick`
+- Unlimited DeepSeek assistant prompts
+
+## Competitive Review
+
+- [docs/competitive-analysis.md](C:/Users/dilee/OneDrive/Desktop/Personal-Projects/career-autopilot/docs/competitive-analysis.md)
 
 ## Continuous Auto Apply
 

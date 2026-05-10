@@ -111,7 +111,8 @@ label {
 }
 
 input,
-select {
+select,
+textarea {
   border: 1px solid #bdd5cc;
   border-radius: 10px;
   padding: 0.58rem;
@@ -119,7 +120,8 @@ select {
 }
 
 input:focus,
-select:focus {
+select:focus,
+textarea:focus {
   outline: 2px solid #87e3c6;
   border-color: #81d6bc;
 }
@@ -169,6 +171,37 @@ button:disabled {
   font-size: 1.05rem;
 }
 
+.plan-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.plan-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.28rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.plan-pill.basic {
+  background: #eef5f3;
+  color: #355549;
+}
+
+.plan-pill.pro {
+  background: #ddf5ec;
+  color: #0b6b4e;
+}
+
+.status-inline {
+  color: var(--ink-soft);
+  font-size: 0.82rem;
+}
+
 .ghost {
   background: #fff;
   color: var(--ink);
@@ -184,6 +217,32 @@ button:disabled {
 
 .panel h2 {
   margin-top: 0.1rem;
+}
+
+.feature-card {
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 12px;
+  padding: 0.85rem;
+}
+
+.feature-card h3 {
+  margin-top: 0;
+}
+
+.plain-list {
+  margin: 0.4rem 0 0;
+  padding-left: 1.1rem;
+  color: var(--ink-soft);
+}
+
+.locked-note {
+  margin: 0 0 0.8rem;
+  color: #916100;
+  background: #fff4d7;
+  border: 1px solid #f0d48a;
+  border-radius: 10px;
+  padding: 0.7rem 0.85rem;
 }
 
 .inline-actions {
@@ -237,6 +296,12 @@ button:disabled {
   display: grid;
   gap: 0.7rem;
   margin-top: 0.8rem;
+}
+
+.assistant-list {
+  display: grid;
+  gap: 0.7rem;
+  margin-top: 0.9rem;
 }
 
 .application-card {
@@ -295,6 +360,23 @@ button:disabled {
 .empty-state {
   margin: 0;
   color: var(--ink-soft);
+}
+
+.assistant-card {
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 12px;
+  padding: 0.85rem;
+}
+
+.assistant-card.assistant {
+  background: #f8fdfb;
+}
+
+.assistant-content {
+  white-space: pre-wrap;
+  line-height: 1.5;
+  color: var(--ink);
 }
 
 .results-grid {
