@@ -126,150 +126,107 @@ def build_assistant_messages(
     return messages
 
 
-def run_deepseek_assistant(
-    messages: list[dict[str, str]],
-    user_id: str,
-) -> str:
-    api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
-    if not api_key:
-        raise RuntimeError("DeepSeek is not configured. Set DEEPSEEK_API_KEY on the backend.")
-
-    base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").strip().rstrip("/")
-    model = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash").strip() or "deepseek-v4-flash"
-    safe_user_id = re.sub(r"[^a-zA-Z0-9\-_]", "-", user_id)[:128] or "anonymous-user"
-
-    payload: dict[str, Any] = {
-        "model": model,
-        "messages": messages,
-        "thinking": {"type": "enabled"},
-        "reasoning_effort": "high",
-        "stream": False,
-        "user_id": safe_user_id,
-    }
-
-    response = requests.post(
-        f"{base_url}/chat/completions",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        json=payload,
-        timeout=60,
-    )
-    if response.status_code == 402:
-        raise RuntimeError(
-            "DeepSeek account balance is empty. Top up your DeepSeek API account or replace "
-            "DEEPSEEK_API_KEY with a funded key, then try the assistant again."
-        )
-    if not response.ok:
-        try:
-            detail = response.json()
-        except Exception:
-            detail = response.text
-        raise RuntimeError(f"DeepSeek request failed: {detail}")
-    data = response.json()
-    choices = data.get("choices") or []
-    if not choices:
-        raise RuntimeError("DeepSeek returned no completion choices.")
-    message = choices[0].get("message") or {}
-    content = message.get("content", "")
-    if isinstance(content, list):
-        text_parts = []
-        for part in content:
-            if isinstance(part, dict):
-                text = part.get("text") or part.get("content") or ""
-                if text:
-                    text_parts.append(str(text))
-        content = "\n".join(text_parts)
-    if not str(content).strip():
-        raise RuntimeError("DeepSeek returned an empty assistant response.")
-    return str(content).strip()
-
-
-def _extract_openai_output_text(data: dict[str, Any]) -> str:
-    direct_text = str(data.get("output_text", "") or "").strip()
-    if direct_text:
-        return direct_text
-
+def _extract_anthropic_text(data: dict[str, Any]) -> str:
     text_parts: list[str] = []
-    for item in data.get("output") or []:
-        if not isinstance(item, dict) or item.get("type") != "message":
+    for item in data.get("content") or []:
+        if not isinstance(item, dict):
             continue
-        for content in item.get("content") or []:
-            if not isinstance(content, dict):
-                continue
-            text_value = content.get("text", "")
-            if isinstance(text_value, str) and text_value.strip():
-                text_parts.append(text_value.strip())
+        if item.get("type") == "text":
+            text_value = str(item.get("text", "") or "").strip()
+            if text_value:
+                text_parts.append(text_value)
     return "\n".join(text_parts).strip()
 
 
-def run_openai_assistant(
+def _anthropic_error_message(detail_payload: Any, fallback: str) -> str:
+    if isinstance(detail_payload, dict):
+        error_obj = detail_payload.get("error")
+        if isinstance(error_obj, dict):
+            message = str(error_obj.get("message", "") or "").strip()
+            if message:
+                return message
+        message = str(detail_payload.get("message", "") or "").strip()
+        if message:
+            return message
+    return fallback.strip()
+
+
+def run_anthropic_assistant(
     messages: list[dict[str, str]],
     user_id: str,
 ) -> str:
-    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
     if not api_key:
-        raise RuntimeError("OpenAI is not configured. Set OPENAI_API_KEY on the backend.")
+        raise RuntimeError("Anthropic is not configured. Set ANTHROPIC_API_KEY on the backend.")
 
-    model = os.getenv("OPENAI_MODEL", "gpt-5-mini").strip() or "gpt-5-mini"
+    model = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514").strip() or "claude-sonnet-4-20250514"
     safe_user_id = re.sub(r"[^a-zA-Z0-9\-_]", "-", user_id)[:128] or "anonymous-user"
 
-    instructions = "\n\n".join(
+    system_prompt = "\n\n".join(
         item.get("content", "").strip()
         for item in messages
         if item.get("role") == "system" and item.get("content", "").strip()
     ).strip()
-    input_items = [
-        {
-            "role": item.get("role", "user"),
-            "content": [{"type": "input_text", "text": item.get("content", "").strip()}],
-        }
+    conversation = [
+        {"role": item.get("role", "user"), "content": item.get("content", "").strip()}
         for item in messages
         if item.get("role") in {"user", "assistant"} and item.get("content", "").strip()
     ]
-    if not input_items:
-        raise RuntimeError("OpenAI request could not be built because no assistant input was provided.")
+    if not conversation:
+        raise RuntimeError("Anthropic request could not be built because no assistant input was provided.")
 
     payload: dict[str, Any] = {
         "model": model,
-        "input": input_items,
-        "metadata": {"user_id": safe_user_id, "provider": "openai"},
+        "max_tokens": 1200,
+        "messages": conversation,
+        "metadata": {"user_id": safe_user_id},
     }
-    if instructions:
-        payload["instructions"] = instructions
+    if system_prompt:
+        payload["system"] = system_prompt
 
     response = requests.post(
-        "https://api.openai.com/v1/responses",
+        "https://api.anthropic.com/v1/messages",
         headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
         },
         json=payload,
         timeout=60,
     )
+
     detail_payload = None
     try:
         detail_payload = response.json()
     except Exception:
         detail_payload = None
 
-    if response.status_code in {401, 403}:
-        detail_text = str(detail_payload or response.text)
-        if "invalid_api_key" in detail_text.lower() or "incorrect api key" in detail_text.lower():
-            raise RuntimeError("OpenAI API key is invalid. Update OPENAI_API_KEY in Render and redeploy.")
+    detail_text = _anthropic_error_message(detail_payload, response.text)
+    lowered = detail_text.lower()
+
+    if response.status_code == 401:
+        raise RuntimeError("Anthropic API key is invalid. Update ANTHROPIC_API_KEY in Render and redeploy.")
+    if response.status_code == 403:
+        raise RuntimeError(
+            "Anthropic returned a permission error for this key or model. Check workspace access and ANTHROPIC_MODEL in Render."
+        )
     if response.status_code == 429:
         raise RuntimeError(
-            "OpenAI rate limit or quota was reached. Check your OpenAI billing and usage tier, then try again."
+            "Anthropic rate limit or billing limit was reached. Check Anthropic billing and usage, then try again."
         )
+    if response.status_code == 529:
+        raise RuntimeError("Anthropic is temporarily overloaded. Wait a moment and try the assistant again.")
     if not response.ok:
-        detail = detail_payload if detail_payload is not None else response.text
-        raise RuntimeError(f"OpenAI request failed: {detail}")
+        if "credit balance" in lowered or "insufficient" in lowered or "billing" in lowered:
+            raise RuntimeError(
+                "Anthropic billing is not available for this key right now. Add credit or update the Anthropic account, then retry."
+            )
+        raise RuntimeError(f"Anthropic request failed: {detail_text}")
 
-    data = response.json()
-    content = _extract_openai_output_text(data)
+    data = detail_payload if isinstance(detail_payload, dict) else response.json()
+    content = _extract_anthropic_text(data)
     if not content:
-        raise RuntimeError("OpenAI returned an empty assistant response.")
+        raise RuntimeError("Anthropic returned an empty assistant response.")
     return content
 
 
@@ -277,38 +234,4 @@ def run_personal_assistant(
     messages: list[dict[str, str]],
     user_id: str,
 ) -> str:
-    provider = (os.getenv("ASSISTANT_PROVIDER", "openai").strip().lower() or "openai")
-    has_deepseek = bool(os.getenv("DEEPSEEK_API_KEY", "").strip())
-    has_openai = bool(os.getenv("OPENAI_API_KEY", "").strip())
-
-    if provider == "deepseek":
-        return run_deepseek_assistant(messages, user_id)
-    if provider == "openai":
-        return run_openai_assistant(messages, user_id)
-    if provider not in {"auto"}:
-        raise RuntimeError("Unsupported ASSISTANT_PROVIDER. Use openai, auto, or deepseek.")
-
-    if has_deepseek:
-        try:
-            return run_deepseek_assistant(messages, user_id)
-        except Exception as exc:
-            fallback_markers = (
-                "balance",
-                "insufficient",
-                "quota",
-                "rate limit",
-                "not configured",
-                "api key",
-            )
-            if has_openai and any(marker in str(exc).lower() for marker in fallback_markers):
-                return run_openai_assistant(messages, user_id)
-            if not has_openai:
-                raise
-            raise
-
-    if has_openai:
-        return run_openai_assistant(messages, user_id)
-
-    raise RuntimeError(
-        "No assistant provider is configured. Set ASSISTANT_PROVIDER=openai and add OPENAI_API_KEY on the backend."
-    )
+    return run_anthropic_assistant(messages, user_id)

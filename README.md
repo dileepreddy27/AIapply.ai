@@ -8,7 +8,7 @@ Full-stack job platform with:
 - payments via **Stripe Checkout**,
 - role-based resume matching with a **RAG-style retrieval layer**,
 - a **Basic vs Pro** entitlement model,
-- a **Personal Assistant Agent** powered by OpenAI.
+- a **Personal Assistant Agent** powered by Anthropic Claude.
 
 ## Architecture
 
@@ -81,8 +81,7 @@ Set values in `.env`:
 - `LIVE_GREENHOUSE_BOARDS`, `LIVE_LEVER_SITES` (optional, live job discovery sources)
 - `RESEND_API_KEY`, `EMAIL_FROM` (optional, application confirmation emails)
 - `AUTO_APPLY_CRON_SECRET` (for scheduled continuous auto-apply runs)
-- `ASSISTANT_PROVIDER` (`openai` for the current testing setup)
-- `OPENAI_API_KEY`, `OPENAI_MODEL` (assistant provider)
+- `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` (assistant provider)
 
 Run backend API:
 
@@ -172,7 +171,7 @@ Open:
   - resume upload,
   - role-based matching with live discovery fallback,
   - Basic vs Pro subscription gating,
-  - Personal Assistant Agent with OpenAI support,
+  - Personal Assistant Agent with Anthropic Claude support,
   - Auto Apply queue with explicit consent and daily limits for Pro users,
   - Stripe checkout button.
 

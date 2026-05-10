@@ -375,13 +375,13 @@ export default function DashboardPage() {
   function humanizeAssistantError(text: string): string {
     const normalized = text.toLowerCase();
     if (normalized.includes("incorrect api key") || normalized.includes("invalid_api_key") || normalized.includes("openai api key is invalid")) {
-      return "Your OpenAI key is invalid in Render. Update OPENAI_API_KEY, keep ASSISTANT_PROVIDER=openai, redeploy Render, and reopen the assistant.";
+      return "Your Anthropic key is invalid in Render. Update ANTHROPIC_API_KEY, redeploy Render, and reopen the assistant.";
     }
     if (normalized.includes("insufficient balance") || normalized.includes("balance is empty")) {
-      return "The assistant account does not have available API credit right now. Add billing to the active OpenAI account in Render, redeploy if needed, and try again.";
+      return "The Anthropic assistant account does not have available billing or credit right now. Check Anthropic billing, redeploy if needed, and try again.";
     }
     if (normalized.includes("quota") || normalized.includes("rate limit")) {
-      return "The OpenAI assistant hit a quota or rate-limit issue. Check OpenAI billing and usage for the key configured in Render, then try again.";
+      return "The Anthropic assistant hit a quota, billing limit, or rate-limit issue. Check Anthropic billing and usage for the key configured in Render, then try again.";
     }
     return text;
   }
