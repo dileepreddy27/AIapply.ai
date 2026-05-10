@@ -267,7 +267,10 @@ export default function DashboardPage() {
   function humanizeAssistantError(text: string): string {
     const normalized = text.toLowerCase();
     if (normalized.includes("insufficient balance") || normalized.includes("balance is empty")) {
-      return "DeepSeek does not have available API credit right now. Top up the DeepSeek account or use a funded DEEPSEEK_API_KEY in Render, then reopen the assistant.";
+      return "The configured assistant provider does not have available API credit right now. Top up that provider, or switch Render to ASSISTANT_PROVIDER=openai with a funded OPENAI_API_KEY, then reopen the assistant.";
+    }
+    if (normalized.includes("quota") || normalized.includes("rate limit")) {
+      return "The assistant provider hit a quota or rate-limit issue. Check billing for the active provider in Render and try again.";
     }
     return text;
   }

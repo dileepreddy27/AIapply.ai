@@ -184,3 +184,124 @@ def run_deepseek_assistant(
     if not str(content).strip():
         raise RuntimeError("DeepSeek returned an empty assistant response.")
     return str(content).strip()
+
+
+def _extract_openai_output_text(data: dict[str, Any]) -> str:
+    direct_text = str(data.get("output_text", "") or "").strip()
+    if direct_text:
+        return direct_text
+
+    text_parts: list[str] = []
+    for item in data.get("output") or []:
+        if not isinstance(item, dict) or item.get("type") != "message":
+            continue
+        for content in item.get("content") or []:
+            if not isinstance(content, dict):
+                continue
+            text_value = content.get("text", "")
+            if isinstance(text_value, str) and text_value.strip():
+                text_parts.append(text_value.strip())
+    return "\n".join(text_parts).strip()
+
+
+def run_openai_assistant(
+    messages: list[dict[str, str]],
+    user_id: str,
+) -> str:
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("OpenAI is not configured. Set OPENAI_API_KEY on the backend.")
+
+    model = os.getenv("OPENAI_MODEL", "gpt-5-mini").strip() or "gpt-5-mini"
+    safe_user_id = re.sub(r"[^a-zA-Z0-9\-_]", "-", user_id)[:128] or "anonymous-user"
+
+    instructions = "\n\n".join(
+        item.get("content", "").strip()
+        for item in messages
+        if item.get("role") == "system" and item.get("content", "").strip()
+    ).strip()
+    input_items = [
+        {
+            "role": item.get("role", "user"),
+            "content": [{"type": "input_text", "text": item.get("content", "").strip()}],
+        }
+        for item in messages
+        if item.get("role") in {"user", "assistant"} and item.get("content", "").strip()
+    ]
+    if not input_items:
+        raise RuntimeError("OpenAI request could not be built because no assistant input was provided.")
+
+    payload: dict[str, Any] = {
+        "model": model,
+        "input": input_items,
+        "metadata": {"user_id": safe_user_id, "provider": "openai"},
+    }
+    if instructions:
+        payload["instructions"] = instructions
+
+    response = requests.post(
+        "https://api.openai.com/v1/responses",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json=payload,
+        timeout=60,
+    )
+    if response.status_code == 429:
+        raise RuntimeError(
+            "OpenAI rate limit or quota was reached. Check your OpenAI billing and usage tier, then try again."
+        )
+    if not response.ok:
+        try:
+            detail = response.json()
+        except Exception:
+            detail = response.text
+        raise RuntimeError(f"OpenAI request failed: {detail}")
+
+    data = response.json()
+    content = _extract_openai_output_text(data)
+    if not content:
+        raise RuntimeError("OpenAI returned an empty assistant response.")
+    return content
+
+
+def run_personal_assistant(
+    messages: list[dict[str, str]],
+    user_id: str,
+) -> str:
+    provider = (os.getenv("ASSISTANT_PROVIDER", "auto").strip().lower() or "auto")
+    has_deepseek = bool(os.getenv("DEEPSEEK_API_KEY", "").strip())
+    has_openai = bool(os.getenv("OPENAI_API_KEY", "").strip())
+
+    if provider == "deepseek":
+        return run_deepseek_assistant(messages, user_id)
+    if provider == "openai":
+        return run_openai_assistant(messages, user_id)
+    if provider not in {"auto"}:
+        raise RuntimeError("Unsupported ASSISTANT_PROVIDER. Use auto, deepseek, or openai.")
+
+    if has_deepseek:
+        try:
+            return run_deepseek_assistant(messages, user_id)
+        except Exception as exc:
+            fallback_markers = (
+                "balance",
+                "insufficient",
+                "quota",
+                "rate limit",
+                "not configured",
+                "api key",
+            )
+            if has_openai and any(marker in str(exc).lower() for marker in fallback_markers):
+                return run_openai_assistant(messages, user_id)
+            if not has_openai:
+                raise
+            raise
+
+    if has_openai:
+        return run_openai_assistant(messages, user_id)
+
+    raise RuntimeError(
+        "No assistant provider is configured. Set DEEPSEEK_API_KEY or OPENAI_API_KEY on the backend."
+    )

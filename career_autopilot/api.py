@@ -21,7 +21,7 @@ from .assistant_agent import (
     assistant_mode_options,
     build_assistant_messages,
     create_thread_title,
-    run_deepseek_assistant,
+    run_personal_assistant,
 )
 from .models import JobPosting
 from .profile_options import company_matches_ranking, get_profile_option_payload
@@ -1052,7 +1052,7 @@ def assistant_chat(
         )
 
     try:
-        assistant_text = run_deepseek_assistant(
+        assistant_text = run_personal_assistant(
             build_assistant_messages(
                 mode=mode,
                 profile=profile,
