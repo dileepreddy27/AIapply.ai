@@ -48,6 +48,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_JOBS_FILE = PROJECT_ROOT / "data" / "jobs.jsonl"
 DEFAULT_LINKEDIN_IMPORT = PROJECT_ROOT / "data" / "imports" / "linkedin_jobs.csv"
 DEFAULT_INDEED_IMPORT = PROJECT_ROOT / "data" / "imports" / "indeed_jobs.csv"
+DEFAULT_IMPORTS_DIR = PROJECT_ROOT / "data" / "imports"
 
 DEFAULT_GREENHOUSE_BOARDS = [
     "vercel",
@@ -117,6 +118,16 @@ def _load_import_jobs(path: Path, source: str) -> list[JobPosting]:
     return out
 
 
+def _load_import_jobs_from_directory(path: Path) -> list[JobPosting]:
+    if not path.exists() or not path.is_dir():
+        return []
+    out: list[JobPosting] = []
+    for csv_file in sorted(path.glob("*.csv")):
+        source_name = csv_file.stem.replace("_jobs", "").replace("-", "_").strip() or "import"
+        out.extend(_load_import_jobs(csv_file, source_name))
+    return out
+
+
 def _text_matches_query(job: JobPosting, query: str) -> bool:
     q = query.lower().strip()
     if not q:
@@ -148,11 +159,21 @@ def _discover_live_jobs_with_diagnostics(query: str, limit: int = 250) -> tuple[
     }
 
     # 1) Local import fallbacks if user uploaded LinkedIn/Indeed lists.
-    imported_linkedin = _load_import_jobs(DEFAULT_LINKEDIN_IMPORT, "linkedin")
-    imported_indeed = _load_import_jobs(DEFAULT_INDEED_IMPORT, "indeed")
-    jobs.extend(imported_linkedin)
-    jobs.extend(imported_indeed)
-    diagnostics["imports_loaded"] = len(imported_linkedin) + len(imported_indeed)
+    imported_directory_jobs = _load_import_jobs_from_directory(DEFAULT_IMPORTS_DIR)
+    if not imported_directory_jobs:
+        imported_linkedin = _load_import_jobs(DEFAULT_LINKEDIN_IMPORT, "linkedin")
+        imported_indeed = _load_import_jobs(DEFAULT_INDEED_IMPORT, "indeed")
+        imported_directory_jobs = [*imported_linkedin, *imported_indeed]
+    jobs.extend(imported_directory_jobs)
+    diagnostics["imports_loaded"] = len(imported_directory_jobs)
+    if imported_directory_jobs:
+        per_source: dict[str, int] = {}
+        for job in imported_directory_jobs:
+            per_source[job.source] = per_source.get(job.source, 0) + 1
+        for source_name, count in sorted(per_source.items()):
+            diagnostics["source_counts"].append(
+                {"source": source_name, "token": "imports", "jobs": count}
+            )
 
     # 2) Public ATS sources (Greenhouse + Lever).
     for token in _split_env_list("LIVE_GREENHOUSE_BOARDS", DEFAULT_GREENHOUSE_BOARDS):
@@ -290,6 +311,40 @@ def _profile_context_blob(profile: dict[str, Any] | None) -> str:
     return "\n".join(x for x in fields if x)
 
 
+def _sanitize_sub_profiles(raw_items: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    cleaned: list[dict[str, Any]] = []
+    for index, item in enumerate(raw_items or []):
+        if not isinstance(item, dict):
+            continue
+        identifier = str(item.get("id", "") or f"sub_profile_{index + 1}").strip()
+        role = str(item.get("target_role", "")).strip()
+        name = str(item.get("name", "")).strip() or role or f"Profile {index + 1}"
+        sector = str(item.get("target_sector", "")).strip()
+        preferred_locations = str(item.get("preferred_locations", "")).strip()
+        work_preferences = item.get("work_preferences", []) or []
+        if isinstance(work_preferences, str):
+            work_preferences = [part.strip() for part in work_preferences.split(",") if part.strip()]
+        else:
+            work_preferences = [str(part).strip() for part in work_preferences if str(part).strip()]
+        companies_to_avoid = str(item.get("companies_to_avoid", "")).strip()
+        minimum_match_score = float(item.get("minimum_match_score", 80.0) or 80.0)
+        kpi_focus = str(item.get("kpi_focus", "")).strip()
+        cleaned.append(
+            {
+                "id": identifier,
+                "name": name,
+                "target_role": role,
+                "target_sector": sector,
+                "preferred_locations": preferred_locations,
+                "work_preferences": work_preferences,
+                "companies_to_avoid": companies_to_avoid,
+                "minimum_match_score": minimum_match_score,
+                "kpi_focus": kpi_focus,
+            }
+        )
+    return cleaned[:8]
+
+
 @lru_cache(maxsize=1)
 def _fetch_roles_from_google_form_csv() -> list[str]:
     """
@@ -389,6 +444,19 @@ def _results_to_cards(results: list[MatchResult], min_score: float) -> list[dict
     for result in results:
         if result.final_score < min_score:
             continue
+        ats_score = int(
+            round(
+                min(
+                    100.0,
+                    (
+                        62.0 * result.final_score
+                        + 22.0 * result.rag_score
+                        + 16.0 * min(len(result.overlap_terms) / 8.0, 1.0)
+                    )
+                    * 100.0,
+                )
+            )
+        )
         cards.append(
             {
                 "title": result.job.title,
@@ -398,6 +466,7 @@ def _results_to_cards(results: list[MatchResult], min_score: float) -> list[dict
                 "source": result.job.source,
                 "rag_score": round(result.rag_score * 5.0, 2),
                 "final_score": round(result.final_score * 5.0, 2),
+                "ats_score": ats_score,
                 "overlap_terms": result.overlap_terms,
                 "explanation": result.explanation,
             }
@@ -508,6 +577,8 @@ class ProfileUpsertRequest(BaseModel):
     max_applications_per_day: int = 10
     minimum_match_score: float = 80.0
     application_summary: str = ""
+    sub_profiles: list[dict[str, Any]] = []
+    active_sub_profile_id: str = ""
 
 
 class CheckoutRequest(BaseModel):
@@ -809,6 +880,7 @@ def upsert_profile(
     existing_profile = _fetch_profile_row(sb, user_id)
     subscription = _resolve_subscription_state(sb, user_id, existing_profile)
     auto_apply_enabled = body.auto_apply_enabled if subscription["features"]["can_auto_apply"] else False
+    sub_profiles = _sanitize_sub_profiles(body.sub_profiles)
     payload = {
         "id": user_id,
         "email": user.get("email", ""),
@@ -842,6 +914,8 @@ def upsert_profile(
             "max_applications_per_day": body.max_applications_per_day,
             "minimum_match_score": body.minimum_match_score,
             "summary": body.application_summary,
+            "sub_profiles": sub_profiles,
+            "active_sub_profile_id": body.active_sub_profile_id,
         },
     }
     try:

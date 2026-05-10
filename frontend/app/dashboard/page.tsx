@@ -12,8 +12,21 @@ type MatchResult = {
   source: string;
   rag_score: number;
   final_score: number;
+  ats_score: number;
   overlap_terms: string[];
   explanation: string;
+};
+
+type SubProfile = {
+  id: string;
+  name: string;
+  target_role: string;
+  target_sector: string;
+  preferred_locations: string;
+  work_preferences: string[];
+  companies_to_avoid: string;
+  minimum_match_score: number;
+  kpi_focus: string;
 };
 
 type CountryOption = {
@@ -158,6 +171,10 @@ export default function DashboardPage() {
   const [companiesToAvoid, setCompaniesToAvoid] = useState("");
   const [maxApplicationsPerDay, setMaxApplicationsPerDay] = useState("10");
   const [minimumMatchScore, setMinimumMatchScore] = useState("80");
+  const [subProfiles, setSubProfiles] = useState<SubProfile[]>([]);
+  const [activeSubProfileId, setActiveSubProfileId] = useState("");
+  const [subProfileName, setSubProfileName] = useState("");
+  const [subProfileKpiFocus, setSubProfileKpiFocus] = useState("");
 
   const [resumeFile, setResumeFile] = useState<File | null>(null);
   const [results, setResults] = useState<MatchResult[]>([]);
@@ -190,6 +207,13 @@ export default function DashboardPage() {
   const autoApplyLocked = !subscription.features.can_auto_apply;
   const recentApplications = useMemo(() => applications.slice(0, 6), [applications]);
   const topResults = useMemo(() => results.slice(0, 6), [results]);
+  const sourceMix = useMemo(() => {
+    const counts = new Map<string, number>();
+    results.forEach((item) => {
+      counts.set(item.source, (counts.get(item.source) ?? 0) + 1);
+    });
+    return Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
+  }, [results]);
   const averageMatchScore = useMemo(() => {
     if (!results.length) return 0;
     const total = results.reduce((sum, item) => sum + Number(item.final_score || 0), 0);
@@ -306,6 +330,13 @@ export default function DashboardPage() {
     }
   }, [assistantMode, assistantModes]);
 
+  useEffect(() => {
+    const active = subProfiles.find((item) => item.id === activeSubProfileId);
+    if (!active) return;
+    setSubProfileName(active.name);
+    setSubProfileKpiFocus(active.kpi_focus);
+  }, [activeSubProfileId, subProfiles]);
+
   function isBackendConfigured(): boolean {
     return !!backendUrl && /^https?:\/\//.test(backendUrl);
   }
@@ -323,6 +354,51 @@ export default function DashboardPage() {
       return "The assistant provider hit a quota or rate-limit issue. Check billing for the active provider in Render and try again.";
     }
     return text;
+  }
+
+  function syncFromSubProfile(profile: SubProfile): void {
+    setActiveSubProfileId(profile.id);
+    setSubProfileName(profile.name);
+    setSubProfileKpiFocus(profile.kpi_focus);
+    if (profile.target_role) setTargetRole(profile.target_role);
+    if (profile.target_sector) setTargetSector(profile.target_sector);
+    if (profile.preferred_locations) setPreferredLocations(profile.preferred_locations);
+    if (profile.work_preferences.length) setWorkPreferences(profile.work_preferences.join(", "));
+    if (profile.companies_to_avoid) setCompaniesToAvoid(profile.companies_to_avoid);
+    if (profile.minimum_match_score) setMinimumMatchScore(String(profile.minimum_match_score));
+  }
+
+  function saveCurrentAsSubProfile(): void {
+    const identifier = activeSubProfileId || `sub-${Date.now()}`;
+    const next: SubProfile = {
+      id: identifier,
+      name: subProfileName.trim() || targetRole.trim() || `Profile ${subProfiles.length + 1}`,
+      target_role: targetRole.trim(),
+      target_sector: targetSector.trim(),
+      preferred_locations: preferredLocations.trim(),
+      work_preferences: workPreferences
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean),
+      companies_to_avoid: companiesToAvoid.trim(),
+      minimum_match_score: Number(minimumMatchScore || "80"),
+      kpi_focus: subProfileKpiFocus.trim()
+    };
+    setSubProfiles((current) => {
+      const withoutExisting = current.filter((item) => item.id !== identifier);
+      return [next, ...withoutExisting].slice(0, 8);
+    });
+    setActiveSubProfileId(identifier);
+    setMessage(`Saved sub profile: ${next.name}`);
+  }
+
+  function removeSubProfile(id: string): void {
+    setSubProfiles((current) => current.filter((item) => item.id !== id));
+    if (activeSubProfileId === id) {
+      setActiveSubProfileId("");
+      setSubProfileName("");
+      setSubProfileKpiFocus("");
+    }
   }
 
   async function authFetch(url: string, options?: RequestInit): Promise<Response> {
@@ -435,6 +511,8 @@ export default function DashboardPage() {
       setCompaniesToAvoid(app.companies_to_avoid ?? "");
       setMaxApplicationsPerDay(String(app.max_applications_per_day ?? 10));
       setMinimumMatchScore(String(app.minimum_match_score ?? 80));
+      setSubProfiles(Array.isArray(app.sub_profiles) ? app.sub_profiles : []);
+      setActiveSubProfileId(app.active_sub_profile_id ?? "");
     } catch (err) {
       console.error(err);
     }
@@ -518,7 +596,9 @@ export default function DashboardPage() {
         companies_to_avoid: companiesToAvoid,
         max_applications_per_day: Number(maxApplicationsPerDay || "10"),
         minimum_match_score: Number(minimumMatchScore || "80"),
-        application_summary: applicationSummary
+        application_summary: applicationSummary,
+        sub_profiles: subProfiles,
+        active_sub_profile_id: activeSubProfileId
       };
       const res = await authFetch(`${backendUrl}/api/profile/upsert`, {
         method: "POST",
@@ -743,11 +823,11 @@ export default function DashboardPage() {
         </div>
 
         <nav className="sidebar-nav" aria-label="Dashboard sections">
-          <a href="#overview" className="sidebar-link">Overview</a>
-          <a href="#targeting" className="sidebar-link">Targeting</a>
-          <a href="#automation" className="sidebar-link">Automation</a>
+          <a href="#profile" className="sidebar-link">Profile</a>
           <a href="#results" className="sidebar-link">Matched Jobs</a>
-          <a href="#queue" className="sidebar-link">Queue</a>
+          <a href="#automation" className="sidebar-link">Auto Apply</a>
+          <a href="#premium-features" className="sidebar-link">Premium Features</a>
+          <a href="#analytics" className="sidebar-link">Analytics</a>
         </nav>
 
         <div className="sidebar-plan-card">
@@ -784,19 +864,19 @@ export default function DashboardPage() {
 
         {message && <div className="status-banner">{message}</div>}
 
-        <section className="metric-grid" id="overview">
+        <section className="metric-grid" id="analytics">
           <article className="metric-card">
-            <p className="metric-label">Profile Strength</p>
+            <p className="metric-label">Profile Completion</p>
             <strong>{profileCompletion}%</strong>
             <span>Fields ready for matching and apply flows</span>
           </article>
           <article className="metric-card">
-            <p className="metric-label">Matched Roles</p>
+            <p className="metric-label">Matched Jobs</p>
             <strong>{results.length}</strong>
             <span>Average score {averageMatchScore}/5</span>
           </article>
           <article className="metric-card">
-            <p className="metric-label">Queue Health</p>
+            <p className="metric-label">Total Jobs Applied</p>
             <strong>{applicationsCount}</strong>
             <span>{queuePendingCount} waiting review · {queueReadyCount} ready</span>
           </article>
@@ -808,7 +888,7 @@ export default function DashboardPage() {
         </section>
 
         <section className="dashboard-grid">
-          <article className="dashboard-card dashboard-card-wide" id="targeting">
+          <article className="dashboard-card dashboard-card-wide" id="profile">
             <div className="card-header-row">
               <div>
                 <p className="feature-kicker">Search Strategy</p>
@@ -938,7 +1018,7 @@ export default function DashboardPage() {
             </div>
           </article>
 
-          <article className="dashboard-card" id="profile">
+          <article className="dashboard-card">
             <div className="card-header-row">
               <div>
                 <p className="feature-kicker">Profile</p>
@@ -987,6 +1067,64 @@ export default function DashboardPage() {
             </div>
           </article>
 
+          <article className="dashboard-card">
+            <div className="card-header-row">
+              <div>
+                <p className="feature-kicker">Multi Role Strategy</p>
+                <h3>Sub Profiles</h3>
+              </div>
+              <button type="button" onClick={saveCurrentAsSubProfile} className="ghost">
+                Save Current Role
+              </button>
+            </div>
+            <div className="dashboard-form-grid">
+              <label>
+                Sub Profile Name
+                <input
+                  value={subProfileName}
+                  onChange={(e) => setSubProfileName(e.target.value)}
+                  placeholder="Frontend Focus, AI Automation, Backend Core"
+                />
+              </label>
+              <label>
+                KPI / Role Goal
+                <input
+                  value={subProfileKpiFocus}
+                  onChange={(e) => setSubProfileKpiFocus(e.target.value)}
+                  placeholder="React roles in remote US, 5 applications daily"
+                />
+              </label>
+            </div>
+            <div className="sub-profile-list">
+              {subProfiles.length === 0 ? (
+                <p className="empty-state">
+                  Save multiple role strategies here for frontend, backend, full stack, AI automation, and more.
+                </p>
+              ) : (
+                subProfiles.map((item) => (
+                  <article
+                    key={item.id}
+                    className={`sub-profile-card${item.id === activeSubProfileId ? " active" : ""}`}
+                  >
+                    <div>
+                      <h4>{item.name}</h4>
+                      <p>{item.target_role || "Untitled role"} · {item.preferred_locations || "Any location"}</p>
+                      {item.kpi_focus && <p>{item.kpi_focus}</p>}
+                    </div>
+                    <div className="feature-actions">
+                      <button type="button" className="ghost" onClick={() => syncFromSubProfile(item)}>
+                        Use
+                      </button>
+                      <button type="button" className="ghost" onClick={() => removeSubProfile(item.id)}>
+                        Remove
+                      </button>
+                    </div>
+                  </article>
+                ))
+              )}
+            </div>
+          </article>
+
           <article className="dashboard-card" id="automation">
             <div className="card-header-row">
               <div>
@@ -1002,6 +1140,10 @@ export default function DashboardPage() {
                 Auto Apply stays behind Pro. Basic users still get matching, tracking, and assistant support.
               </p>
             )}
+            <p className="field-hint">
+              Live discovery uses Greenhouse and Lever directly, and also supports LinkedIn, Indeed,
+              and other portal imports from the backend `data/imports` folder.
+            </p>
             <div className="dashboard-form-grid">
               <label>
                 Work Authorization
@@ -1121,9 +1263,11 @@ export default function DashboardPage() {
                   <article key={job.url} className="job-row-card">
                     <div>
                       <h4>{job.title}</h4>
-                      <p>{job.company} · {job.location}</p>
+                      <p>{job.company} · {job.location} · {job.source}</p>
+                      <p className="field-hint">{job.explanation}</p>
                     </div>
                     <div className="job-row-meta">
+                      <span className="topbar-chip">ATS {job.ats_score}%</span>
                       <span className="topbar-chip">Final {job.final_score}/5</span>
                       <span className="status-inline">RAG {job.rag_score}/5</span>
                       <a href={job.url} target="_blank" rel="noreferrer">
@@ -1136,20 +1280,39 @@ export default function DashboardPage() {
             </div>
           </article>
 
-          <article className="dashboard-card" id="queue">
+          <article className="dashboard-card" id="premium-features">
             <div className="card-header-row">
               <div>
-                <p className="feature-kicker">Queue</p>
-                <h3>Application Pipeline</h3>
+                <p className="feature-kicker">Premium Features</p>
+                <h3>Automation + Assistant</h3>
+              </div>
+              <button onClick={startCheckout} className="ghost" type="button">
+                {subscription.plan === "pro" && subscription.status !== "inactive" ? "Pro Active" : "View Pro"}
+              </button>
+            </div>
+            <ul className="plain-list">
+              <li>Auto Apply with approval rules and daily caps</li>
+              <li>Personal Assistant for resume, cover letters, interview prep, and follow-ups</li>
+              <li>ATS-style scoring based on resume and job description fit</li>
+              <li>Sub profiles for multiple target roles and KPIs</li>
+              <li>Continuous job monitoring across ATS sources and imported portals</li>
+            </ul>
+          </article>
+
+          <article className="dashboard-card">
+            <div className="card-header-row">
+              <div>
+                <p className="feature-kicker">Analytics</p>
+                <h3>Pipeline + Source Mix</h3>
               </div>
               <button onClick={() => void loadApplications()} className="ghost" type="button">
                 Refresh
               </button>
             </div>
             <div className="queue-stat-row">
-              <span className="topbar-chip">{applicationsCount} total</span>
-              <span className="topbar-chip">{queuePendingCount} review</span>
-              <span className="topbar-chip">{queueReadyCount} ready</span>
+              <span className="topbar-chip">{applicationsCount} applied</span>
+              <span className="topbar-chip">{results.length} matched</span>
+              <span className="topbar-chip">{profileCompletion}% profile</span>
             </div>
             <div className="queue-preview-list">
               {recentApplications.length === 0 ? (
@@ -1169,13 +1332,20 @@ export default function DashboardPage() {
                 ))
               )}
             </div>
+            <ul className="plain-list">
+              {sourceMix.map(([source, count]) => (
+                <li key={source}>
+                  <strong>{source}:</strong> {count} matched roles
+                </li>
+              ))}
+            </ul>
           </article>
 
           <article className="dashboard-card">
             <div className="card-header-row">
               <div>
-                <p className="feature-kicker">Platform Edge</p>
-                <h3>Why This Product Wins</h3>
+                <p className="feature-kicker">Competitive Edge</p>
+                <h3>What Makes This Stronger</h3>
               </div>
             </div>
             <ul className="plain-list">
