@@ -87,6 +87,86 @@ COMPANY_RANKING_OPTIONS: list[dict[str, str]] = [
     {"value": "non_fortune", "label": "Non-Fortune / Other Companies"},
 ]
 
+WORK_AUTHORIZATION_OPTIONS = [
+    "Prefer not to answer",
+    "U.S. Citizen",
+    "Permanent Resident / Green Card",
+    "Naturalized Citizen",
+    "Refugee / Asylee",
+    "Employment Authorization Document (EAD)",
+    "F-1 CPT",
+    "F-1 OPT",
+    "F-1 STEM OPT",
+    "H-1B",
+    "H-4 EAD",
+    "L-1",
+    "L-2 EAD",
+    "O-1",
+    "TN Visa",
+    "E-3 Visa",
+    "J-1 Visa",
+    "J-2 EAD",
+    "Dependent Visa Holder",
+    "Need Sponsorship",
+    "Authorized to work in Canada",
+    "Authorized to work in United Kingdom",
+    "Authorized to work in Australia",
+    "Authorized to work in New Zealand",
+]
+
+VETERAN_STATUS_OPTIONS = [
+    "Prefer not to answer",
+    "Not a veteran",
+    "Veteran",
+    "Protected veteran",
+    "Recently separated veteran",
+    "Active duty wartime or campaign badge veteran",
+    "Armed forces service medal veteran",
+    "Disabled veteran",
+]
+
+RACE_ETHNICITY_OPTIONS = [
+    "Prefer not to answer",
+    "American Indian or Alaska Native",
+    "Asian",
+    "Black or African American",
+    "Hispanic or Latino",
+    "Middle Eastern or North African",
+    "Native Hawaiian or Other Pacific Islander",
+    "Two or More Races",
+    "White",
+    "Other",
+]
+
+GENDER_IDENTITY_OPTIONS = [
+    "Prefer not to answer",
+    "Male",
+    "Female",
+    "Non-binary",
+    "Transgender",
+    "Agender",
+    "Genderqueer",
+    "Another identity",
+]
+
+DISABILITY_STATUS_OPTIONS = [
+    "Prefer not to answer",
+    "No, I do not have a disability",
+    "Yes, I have a disability",
+    "I have a record of a disability",
+    "I do not wish to answer",
+]
+
+WORK_PREFERENCE_OPTIONS = [
+    "Remote",
+    "Hybrid",
+    "On-site",
+    "Flexible",
+    "Contract",
+    "Full-time",
+    "Part-time",
+]
+
 
 FORTUNE_1_50 = {
     "walmart",
@@ -279,5 +359,11 @@ def get_profile_option_payload() -> dict[str, Any]:
             for country, regions in COUNTRY_REGIONS.items()
         ],
         "company_ranking_filters": COMPANY_RANKING_OPTIONS,
+        "work_authorization_statuses": WORK_AUTHORIZATION_OPTIONS,
+        "veteran_statuses": VETERAN_STATUS_OPTIONS,
+        "race_ethnicity_options": RACE_ETHNICITY_OPTIONS,
+        "gender_identity_options": GENDER_IDENTITY_OPTIONS,
+        "disability_status_options": DISABILITY_STATUS_OPTIONS,
+        "work_preference_options": WORK_PREFERENCE_OPTIONS,
     }
 

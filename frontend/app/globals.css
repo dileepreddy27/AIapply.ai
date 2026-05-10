@@ -242,6 +242,12 @@ button:disabled {
   background: rgba(10, 39, 38, 0.84);
 }
 
+.sidebar-link.active {
+  border-color: rgba(96, 234, 197, 0.44);
+  background: rgba(11, 49, 47, 0.95);
+  color: #f3fffa;
+}
+
 .sidebar-plan-card {
   padding: 1rem;
   border-radius: 20px;
@@ -339,6 +345,24 @@ button:disabled {
   font-size: 0.8rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
+}
+
+.workflow-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
+.workflow-chip {
+  background: rgba(9, 34, 33, 0.85);
+  color: #d9f4ec;
+  border: 1px solid rgba(125, 213, 191, 0.14);
+}
+
+.workflow-chip.active {
+  background: linear-gradient(135deg, #17b58f, #0f8f73);
+  color: #041513;
+  border-color: transparent;
 }
 
 .dashboard-grid {

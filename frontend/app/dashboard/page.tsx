@@ -43,6 +43,12 @@ type ProfileOptions = {
   job_sectors: string[];
   countries: CountryOption[];
   company_ranking_filters: CompanyRankingOption[];
+  work_authorization_statuses: string[];
+  veteran_statuses: string[];
+  race_ethnicity_options: string[];
+  gender_identity_options: string[];
+  disability_status_options: string[];
+  work_preference_options: string[];
 };
 
 type ApplicationRecord = {
@@ -100,6 +106,8 @@ type AssistantMessage = {
   content: string;
   created_at: string;
 };
+
+type DashboardStep = "profile" | "matched_jobs" | "auto_apply" | "analytics";
 
 function cleanPriceId(raw: string): string {
   return raw
@@ -183,7 +191,13 @@ export default function DashboardPage() {
   const [profileOptions, setProfileOptions] = useState<ProfileOptions>({
     job_sectors: [],
     countries: [],
-    company_ranking_filters: []
+    company_ranking_filters: [],
+    work_authorization_statuses: [],
+    veteran_statuses: [],
+    race_ethnicity_options: [],
+    gender_identity_options: [],
+    disability_status_options: [],
+    work_preference_options: []
   });
   const [applications, setApplications] = useState<ApplicationRecord[]>([]);
   const [applicationsCount, setApplicationsCount] = useState(0);
@@ -198,6 +212,7 @@ export default function DashboardPage() {
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [assistantError, setAssistantError] = useState("");
   const [showApplications, setShowApplications] = useState(false);
+  const [activeStep, setActiveStep] = useState<DashboardStep>("profile");
 
   const selectedCountry = useMemo(
     () => profileOptions.countries.find((entry) => entry.label === country),
@@ -337,6 +352,19 @@ export default function DashboardPage() {
     setSubProfileKpiFocus(active.kpi_focus);
   }, [activeSubProfileId, subProfiles]);
 
+  useEffect(() => {
+    const targetMap: Record<DashboardStep, string> = {
+      profile: "profile",
+      matched_jobs: "results",
+      auto_apply: "automation",
+      analytics: "analytics"
+    };
+    const element = document.getElementById(targetMap[activeStep]);
+    if (element) {
+      element.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [activeStep]);
+
   function isBackendConfigured(): boolean {
     return !!backendUrl && /^https?:\/\//.test(backendUrl);
   }
@@ -444,6 +472,22 @@ export default function DashboardPage() {
         countries: Array.isArray(data?.countries) ? data.countries : [],
         company_ranking_filters: Array.isArray(data?.company_ranking_filters)
           ? data.company_ranking_filters
+          : [],
+        work_authorization_statuses: Array.isArray(data?.work_authorization_statuses)
+          ? data.work_authorization_statuses
+          : [],
+        veteran_statuses: Array.isArray(data?.veteran_statuses) ? data.veteran_statuses : [],
+        race_ethnicity_options: Array.isArray(data?.race_ethnicity_options)
+          ? data.race_ethnicity_options
+          : [],
+        gender_identity_options: Array.isArray(data?.gender_identity_options)
+          ? data.gender_identity_options
+          : [],
+        disability_status_options: Array.isArray(data?.disability_status_options)
+          ? data.disability_status_options
+          : [],
+        work_preference_options: Array.isArray(data?.work_preference_options)
+          ? data.work_preference_options
           : []
       });
       setAssistantModes(Array.isArray(data?.assistant_modes) ? data.assistant_modes : []);
@@ -610,6 +654,7 @@ export default function DashboardPage() {
       if (data?.subscription) {
         setSubscription(data.subscription);
       }
+      setActiveStep("matched_jobs");
       setMessage("Profile saved.");
     } catch (err) {
       const text = err instanceof Error ? err.message : "Profile update failed.";
@@ -646,6 +691,7 @@ export default function DashboardPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data?.detail ?? "Match request failed.");
       setResults(data.results ?? []);
+      setActiveStep("matched_jobs");
       setMessage(
         data?.message ??
           `Found ${data.count ?? 0} matching jobs from ${data.scanned_jobs ?? 0} scanned openings.`
@@ -686,6 +732,7 @@ export default function DashboardPage() {
       await loadApplications();
       await loadSubscription();
       setShowApplications(true);
+      setActiveStep("analytics");
       setMessage(
         data?.message ??
           `Auto Apply completed. Matched ${data.matched_jobs}, queued ${data.queued_applications}.`
@@ -823,23 +870,17 @@ export default function DashboardPage() {
         </div>
 
         <nav className="sidebar-nav" aria-label="Dashboard sections">
-          <a href="#profile" className="sidebar-link">Profile</a>
-          <a href="#results" className="sidebar-link">Matched Jobs</a>
-          <a href="#automation" className="sidebar-link">Auto Apply</a>
-          <a href="#premium-features" className="sidebar-link">Premium Features</a>
-          <a href="#analytics" className="sidebar-link">Analytics</a>
+          <button type="button" className={`sidebar-link${activeStep === "profile" ? " active" : ""}`} onClick={() => setActiveStep("profile")}>Profile</button>
+          <button type="button" className={`sidebar-link${activeStep === "matched_jobs" ? " active" : ""}`} onClick={() => setActiveStep("matched_jobs")}>Matched Jobs</button>
+          <button type="button" className={`sidebar-link${activeStep === "auto_apply" ? " active" : ""}`} onClick={() => setActiveStep("auto_apply")}>Auto Apply</button>
+          <button type="button" className={`sidebar-link${activeStep === "analytics" ? " active" : ""}`} onClick={() => setActiveStep("analytics")}>Analytics</button>
         </nav>
 
         <div className="sidebar-plan-card">
           <span className={`plan-pill ${subscription.plan}`}>{subscription.label}</span>
           <h3>{assistantUsageLabel}</h3>
           <p>Status: {subscription.status.replace(/_/g, " ")}</p>
-          <button
-            onClick={startCheckout}
-            disabled={subscription.plan === "pro" && subscription.status !== "inactive"}
-          >
-            {subscription.plan === "pro" && subscription.status !== "inactive" ? "Pro Active" : "Upgrade to Pro"}
-          </button>
+          <p className="field-hint">Workflow testing mode: focus on profile, matching, auto apply, and analytics.</p>
         </div>
 
         <button onClick={signOut} className="ghost sidebar-signout">
@@ -887,8 +928,19 @@ export default function DashboardPage() {
           </article>
         </section>
 
+        <section className="workflow-strip">
+          <button type="button" className={`workflow-chip${activeStep === "profile" ? " active" : ""}`} onClick={() => setActiveStep("profile")}>1. Profile</button>
+          <button type="button" className={`workflow-chip${activeStep === "matched_jobs" ? " active" : ""}`} onClick={() => setActiveStep("matched_jobs")}>2. Matching Jobs</button>
+          <button type="button" className={`workflow-chip${activeStep === "auto_apply" ? " active" : ""}`} onClick={() => setActiveStep("auto_apply")}>3. Auto Apply</button>
+          <button type="button" className={`workflow-chip${activeStep === "analytics" ? " active" : ""}`} onClick={() => setActiveStep("analytics")}>4. Analytics</button>
+        </section>
+
         <section className="dashboard-grid">
-          <article className="dashboard-card dashboard-card-wide" id="profile">
+          <article
+            className="dashboard-card dashboard-card-wide"
+            id="profile"
+            style={activeStep === "profile" ? undefined : { display: "none" }}
+          >
             <div className="card-header-row">
               <div>
                 <p className="feature-kicker">Search Strategy</p>
@@ -987,11 +1039,12 @@ export default function DashboardPage() {
               </label>
               <label>
                 Work Preferences
-                <input
-                  placeholder="Remote, Hybrid, On-site"
-                  value={workPreferences}
-                  onChange={(e) => setWorkPreferences(e.target.value)}
-                />
+                <select value={workPreferences} onChange={(e) => setWorkPreferences(e.target.value)}>
+                  <option value="">Select work preference</option>
+                  {profileOptions.work_preference_options.map((option) => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                </select>
               </label>
               <label>
                 Company Ranking Filter
@@ -1018,7 +1071,10 @@ export default function DashboardPage() {
             </div>
           </article>
 
-          <article className="dashboard-card">
+          <article
+            className="dashboard-card"
+            style={activeStep === "profile" ? undefined : { display: "none" }}
+          >
             <div className="card-header-row">
               <div>
                 <p className="feature-kicker">Profile</p>
@@ -1067,7 +1123,10 @@ export default function DashboardPage() {
             </div>
           </article>
 
-          <article className="dashboard-card">
+          <article
+            className="dashboard-card"
+            style={activeStep === "profile" ? undefined : { display: "none" }}
+          >
             <div className="card-header-row">
               <div>
                 <p className="feature-kicker">Multi Role Strategy</p>
@@ -1125,10 +1184,14 @@ export default function DashboardPage() {
             </div>
           </article>
 
-          <article className="dashboard-card" id="automation">
+          <article
+            className="dashboard-card"
+            id="automation"
+            style={activeStep === "auto_apply" ? undefined : { display: "none" }}
+          >
             <div className="card-header-row">
               <div>
-                <p className="feature-kicker">{subscription.plan === "pro" ? "Pro Active" : "Pro Feature"}</p>
+                <p className="feature-kicker">Automation</p>
                 <h3>Automation Rules</h3>
               </div>
               <button onClick={runAutoApply} disabled={autoApplyLocked}>
@@ -1147,11 +1210,15 @@ export default function DashboardPage() {
             <div className="dashboard-form-grid">
               <label>
                 Work Authorization
-                <input
-                  placeholder="US Citizen, Green Card, Visa..."
+                <select
                   value={workAuthorizationStatus}
                   onChange={(e) => setWorkAuthorizationStatus(e.target.value)}
-                />
+                >
+                  <option value="">Select work authorization / visa status</option>
+                  {profileOptions.work_authorization_statuses.map((option) => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                </select>
               </label>
               <label>
                 Salary Expectation
@@ -1243,7 +1310,11 @@ export default function DashboardPage() {
             </div>
           </article>
 
-          <article className="dashboard-card dashboard-card-wide" id="results">
+          <article
+            className="dashboard-card dashboard-card-wide"
+            id="results"
+            style={activeStep === "matched_jobs" ? undefined : { display: "none" }}
+          >
             <div className="card-header-row">
               <div>
                 <p className="feature-kicker">Matched Jobs</p>
@@ -1270,9 +1341,9 @@ export default function DashboardPage() {
                       <span className="topbar-chip">ATS {job.ats_score}%</span>
                       <span className="topbar-chip">Final {job.final_score}/5</span>
                       <span className="status-inline">RAG {job.rag_score}/5</span>
-                      <a href={job.url} target="_blank" rel="noreferrer">
-                        Open Job
-                      </a>
+                      <button type="button" className="ghost" onClick={() => setActiveStep("auto_apply")}>
+                        Move To Auto Apply
+                      </button>
                     </div>
                   </article>
                 ))
@@ -1280,26 +1351,10 @@ export default function DashboardPage() {
             </div>
           </article>
 
-          <article className="dashboard-card" id="premium-features">
-            <div className="card-header-row">
-              <div>
-                <p className="feature-kicker">Premium Features</p>
-                <h3>Automation + Assistant</h3>
-              </div>
-              <button onClick={startCheckout} className="ghost" type="button">
-                {subscription.plan === "pro" && subscription.status !== "inactive" ? "Pro Active" : "View Pro"}
-              </button>
-            </div>
-            <ul className="plain-list">
-              <li>Auto Apply with approval rules and daily caps</li>
-              <li>Personal Assistant for resume, cover letters, interview prep, and follow-ups</li>
-              <li>ATS-style scoring based on resume and job description fit</li>
-              <li>Sub profiles for multiple target roles and KPIs</li>
-              <li>Continuous job monitoring across ATS sources and imported portals</li>
-            </ul>
-          </article>
-
-          <article className="dashboard-card">
+          <article
+            className="dashboard-card"
+            style={activeStep === "analytics" ? undefined : { display: "none" }}
+          >
             <div className="card-header-row">
               <div>
                 <p className="feature-kicker">Analytics</p>
@@ -1341,7 +1396,10 @@ export default function DashboardPage() {
             </ul>
           </article>
 
-          <article className="dashboard-card">
+          <article
+            className="dashboard-card"
+            style={activeStep === "analytics" ? undefined : { display: "none" }}
+          >
             <div className="card-header-row">
               <div>
                 <p className="feature-kicker">Competitive Edge</p>
@@ -1357,7 +1415,10 @@ export default function DashboardPage() {
             </ul>
           </article>
 
-          <article className="dashboard-card">
+          <article
+            className="dashboard-card"
+            style={activeStep === "profile" ? undefined : { display: "none" }}
+          >
             <div className="card-header-row">
               <div>
                 <p className="feature-kicker">Compliance</p>
@@ -1367,19 +1428,39 @@ export default function DashboardPage() {
             <div className="dashboard-form-grid">
               <label>
                 Veteran Status (optional)
-                <input value={veteranStatus} onChange={(e) => setVeteranStatus(e.target.value)} />
+                <select value={veteranStatus} onChange={(e) => setVeteranStatus(e.target.value)}>
+                  <option value="">Select veteran status</option>
+                  {profileOptions.veteran_statuses.map((option) => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                </select>
               </label>
               <label>
                 Race / Ethnicity (optional)
-                <input value={raceEthnicity} onChange={(e) => setRaceEthnicity(e.target.value)} />
+                <select value={raceEthnicity} onChange={(e) => setRaceEthnicity(e.target.value)}>
+                  <option value="">Select race / ethnicity</option>
+                  {profileOptions.race_ethnicity_options.map((option) => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                </select>
               </label>
               <label>
                 Gender Identity (optional)
-                <input value={genderIdentity} onChange={(e) => setGenderIdentity(e.target.value)} />
+                <select value={genderIdentity} onChange={(e) => setGenderIdentity(e.target.value)}>
+                  <option value="">Select gender identity</option>
+                  {profileOptions.gender_identity_options.map((option) => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                </select>
               </label>
               <label>
                 Disability Status (optional)
-                <input value={disabilityStatus} onChange={(e) => setDisabilityStatus(e.target.value)} />
+                <select value={disabilityStatus} onChange={(e) => setDisabilityStatus(e.target.value)}>
+                  <option value="">Select disability status</option>
+                  {profileOptions.disability_status_options.map((option) => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                </select>
               </label>
               <label>
                 Phone
