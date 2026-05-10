@@ -144,6 +144,12 @@ button:disabled {
   color: var(--ink-soft);
 }
 
+.field-hint {
+  color: var(--ink-soft);
+  font-size: 0.82rem;
+  font-weight: 500;
+}
+
 .dash-shell {
   max-width: 1040px;
   margin: 0 auto;
@@ -191,6 +197,28 @@ button:disabled {
 
 .wide {
   grid-column: span 2;
+}
+
+.suggestion-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 0.2rem;
+}
+
+.suggestion-chip {
+  background: #eff8f4;
+  color: var(--ink);
+  border: 1px solid #b8d8cc;
+  border-radius: 999px;
+  padding: 0.42rem 0.7rem;
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+
+.suggestion-chip.selected {
+  background: #d8f4e8;
+  border-color: #86cfb4;
 }
 
 .results-grid {

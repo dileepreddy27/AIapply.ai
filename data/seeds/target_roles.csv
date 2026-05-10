@@ -1,0 +1,233 @@
+category,label,aliases,keywords
+"Software, IT, and Technology",Software Engineer,Software Developer,backend|frontend|api|programming|application development
+"Software, IT, and Technology",Web Developer,,html|css|javascript|web apps|frontend
+"Software, IT, and Technology",Front-End Developer,Frontend Developer,react|next.js|javascript|typescript|ui
+"Software, IT, and Technology",Back-End Developer,Backend Developer,api|python|java|node.js|sql|microservices
+"Software, IT, and Technology",Full-Stack Developer,Full Stack Developer,frontend|backend|react|node.js|typescript|sql
+"Software, IT, and Technology",Mobile App Developer,,ios|android|swift|kotlin|react native|flutter
+"Software, IT, and Technology",Python Developer,,python|fastapi|django|flask|automation|backend
+"Software, IT, and Technology",Java Developer,,java|spring|microservices|backend
+"Software, IT, and Technology",.NET Developer,DotNet Developer,.net|c#|asp.net|azure
+"Software, IT, and Technology",QA Engineer,Software Tester|QA Analyst,test automation|selenium|playwright|quality assurance
+"Software, IT, and Technology",Software Tester,,
+"Software, IT, and Technology",DevOps Engineer,,docker|kubernetes|terraform|ci/cd|aws|gcp|azure
+"Software, IT, and Technology",Cloud Engineer,,aws|gcp|azure|cloud infrastructure|terraform
+"Software, IT, and Technology",Cybersecurity Analyst,,security|siem|soc|incident response|threat|vulnerability
+"Software, IT, and Technology",Network Engineer,,
+"Software, IT, and Technology",System Administrator,Sysadmin,windows|linux|servers|infrastructure
+"Software, IT, and Technology",Database Administrator,DBA,sql|postgresql|mysql|oracle|database
+"Software, IT, and Technology",Data Analyst,,sql|tableau|power bi|dashboard|analytics|reporting
+"Software, IT, and Technology",Data Engineer,,etl|elt|sql|python|airflow|dbt|bigquery|snowflake
+"Software, IT, and Technology",Machine Learning Engineer,ML Engineer,machine learning|pytorch|tensorflow|model serving|mlops
+"Software, IT, and Technology",AI Engineer,,llm|rag|langchain|agents|prompt engineering|python
+"Software, IT, and Technology",Product Manager,,
+"Software, IT, and Technology",UI/UX Designer,UI Designer|UX Designer,figma|design systems|wireframes|prototyping|user research
+"Software, IT, and Technology",Technical Support Specialist,IT Support Specialist|Help Desk Specialist,troubleshooting|support|ticketing|customer support
+"Software, IT, and Technology",IT Project Manager,Technical Project Manager,agile|scrum|delivery|stakeholder management
+Healthcare and Medical,Registered Nurse,RN,patient care|clinical|hospital|icu|triage|charting
+Healthcare and Medical,Physician,,
+Healthcare and Medical,Physician Assistant,PA,clinical|patient care|assessment|diagnosis
+Healthcare and Medical,Nurse Practitioner,NP,patient care|clinical|primary care|telehealth
+Healthcare and Medical,Medical Assistant,,patient intake|clinical support|ehr|emr
+Healthcare and Medical,Pharmacy Technician,,
+Healthcare and Medical,Pharmacist,,
+Healthcare and Medical,Physical Therapist,,
+Healthcare and Medical,Occupational Therapist,,
+Healthcare and Medical,Radiologic Technologist,Radiology Tech,x-ray|imaging|radiology
+Healthcare and Medical,Medical Laboratory Technician,Lab Tech,laboratory|specimens|testing|clinical lab
+Healthcare and Medical,Medical Coder,,
+Healthcare and Medical,Medical Biller,,
+Healthcare and Medical,Healthcare Administrator,,healthcare operations|compliance|clinic|hospital administration
+Healthcare and Medical,Dental Assistant,,
+Healthcare and Medical,Dental Hygienist,,
+Healthcare and Medical,Home Health Aide,,
+Healthcare and Medical,EMT / Paramedic,EMT|Paramedic,emergency care|ambulance|first response
+Healthcare and Medical,Patient Care Technician,,
+Healthcare and Medical,Clinical Research Coordinator,,clinical trials|research|study coordination|irb
+"Business, Finance, and Administration",Business Analyst,,requirements|stakeholders|process improvement|analytics
+"Business, Finance, and Administration",Financial Analyst,,financial modeling|forecasting|excel|budgeting
+"Business, Finance, and Administration",Accountant,,
+"Business, Finance, and Administration",Auditor,,
+"Business, Finance, and Administration",Bookkeeper,,
+"Business, Finance, and Administration",Payroll Specialist,,
+"Business, Finance, and Administration",Tax Associate,,
+"Business, Finance, and Administration",HR Generalist,,
+"Business, Finance, and Administration",Recruiter,,talent acquisition|sourcing|screening|hiring
+"Business, Finance, and Administration",Administrative Assistant,,
+"Business, Finance, and Administration",Executive Assistant,,
+"Business, Finance, and Administration",Office Manager,,
+"Business, Finance, and Administration",Operations Manager,,
+"Business, Finance, and Administration",Project Manager,,
+"Business, Finance, and Administration",Program Manager,,
+"Business, Finance, and Administration",Management Consultant,,
+"Business, Finance, and Administration",Compliance Analyst,,
+"Business, Finance, and Administration",Risk Analyst,,
+"Business, Finance, and Administration",Procurement Specialist,,
+"Business, Finance, and Administration",Supply Chain Analyst,,
+"Sales, Retail, and Customer Service",Sales Representative,,
+"Sales, Retail, and Customer Service",Account Executive,,
+"Sales, Retail, and Customer Service",Business Development Representative,,
+"Sales, Retail, and Customer Service",Retail Sales Associate,,
+"Sales, Retail, and Customer Service",Store Manager,,
+"Sales, Retail, and Customer Service",Cashier,,
+"Sales, Retail, and Customer Service",Customer Service Representative,,
+"Sales, Retail, and Customer Service",Call Center Representative,,
+"Sales, Retail, and Customer Service",Customer Success Manager,,account management|retention|customer onboarding
+"Sales, Retail, and Customer Service",Sales Manager,,
+"Sales, Retail, and Customer Service",Marketing Coordinator,,
+"Sales, Retail, and Customer Service",Digital Marketing Specialist,,paid search|campaigns|google ads|analytics
+"Sales, Retail, and Customer Service",Social Media Manager,,
+"Sales, Retail, and Customer Service",SEO Specialist,,search engine optimization|keyword research|content seo
+"Sales, Retail, and Customer Service",Content Writer,,
+"Sales, Retail, and Customer Service",Brand Manager,,
+"Sales, Retail, and Customer Service",E-commerce Specialist,,
+"Sales, Retail, and Customer Service",Merchandiser,,
+Education and Training,Teacher,,classroom|lesson plans|instruction|education
+Education and Training,Assistant Teacher,,
+Education and Training,Professor,,
+Education and Training,Adjunct Faculty,,
+Education and Training,Tutor,,
+Education and Training,Instructional Designer,,e-learning|curriculum|learning design|training
+Education and Training,School Counselor,,
+Education and Training,Academic Advisor,,
+Education and Training,Librarian,,
+Education and Training,Training Specialist,,
+Education and Training,Corporate Trainer,,
+Education and Training,Curriculum Developer,,
+Education and Training,Education Coordinator,,
+Education and Training,Special Education Teacher,,
+Education and Training,Teaching Assistant,,
+Engineering and Manufacturing,Mechanical Engineer,,cad|solidworks|manufacturing|mechanical systems
+Engineering and Manufacturing,Electrical Engineer,,circuits|pcb|electronics|electrical systems
+Engineering and Manufacturing,Civil Engineer,,
+Engineering and Manufacturing,Industrial Engineer,,
+Engineering and Manufacturing,Manufacturing Engineer,,
+Engineering and Manufacturing,Quality Engineer,,
+Engineering and Manufacturing,Process Engineer,,
+Engineering and Manufacturing,Production Supervisor,,
+Engineering and Manufacturing,CNC Operator,,
+Engineering and Manufacturing,Machine Operator,,
+Engineering and Manufacturing,Maintenance Technician,,
+Engineering and Manufacturing,Plant Manager,,
+Engineering and Manufacturing,Welder,,
+Engineering and Manufacturing,Assembly Technician,,
+Engineering and Manufacturing,CAD Designer,,
+Engineering and Manufacturing,Automation Engineer,,plc|scada|robotics|test automation|controls
+Engineering and Manufacturing,Robotics Engineer,,
+"Construction, Skilled Trades, and Maintenance",Construction Laborer,,
+"Construction, Skilled Trades, and Maintenance",Carpenter,,
+"Construction, Skilled Trades, and Maintenance",Electrician,,
+"Construction, Skilled Trades, and Maintenance",Plumber,,
+"Construction, Skilled Trades, and Maintenance",HVAC Technician,,
+"Construction, Skilled Trades, and Maintenance",Painter,,
+"Construction, Skilled Trades, and Maintenance",Mason,,
+"Construction, Skilled Trades, and Maintenance",Heavy Equipment Operator,,
+"Construction, Skilled Trades, and Maintenance",Construction Manager,,
+"Construction, Skilled Trades, and Maintenance",Site Supervisor,,
+"Construction, Skilled Trades, and Maintenance",Building Inspector,,
+"Construction, Skilled Trades, and Maintenance",Maintenance Worker,,
+"Construction, Skilled Trades, and Maintenance",Facilities Technician,,
+"Construction, Skilled Trades, and Maintenance",General Contractor,,
+"Construction, Skilled Trades, and Maintenance",Roofer,,
+"Transportation, Logistics, and Warehouse",Truck Driver,CDL Driver,delivery|transportation|logistics|cdl
+"Transportation, Logistics, and Warehouse",Delivery Driver,,
+"Transportation, Logistics, and Warehouse",Warehouse Associate,,
+"Transportation, Logistics, and Warehouse",Forklift Operator,,
+"Transportation, Logistics, and Warehouse",Logistics Coordinator,,
+"Transportation, Logistics, and Warehouse",Dispatcher,,
+"Transportation, Logistics, and Warehouse",Supply Chain Coordinator,,
+"Transportation, Logistics, and Warehouse",Inventory Specialist,,
+"Transportation, Logistics, and Warehouse",Shipping and Receiving Clerk,,
+"Transportation, Logistics, and Warehouse",Package Handler,,
+"Transportation, Logistics, and Warehouse",Material Handler,,
+"Transportation, Logistics, and Warehouse",Fleet Manager,,
+"Transportation, Logistics, and Warehouse",Operations Coordinator,,
+"Transportation, Logistics, and Warehouse",Transportation Manager,,
+"Hospitality, Food, and Travel",Hotel Front Desk Agent,,
+"Hospitality, Food, and Travel",Front Desk Manager,,
+"Hospitality, Food, and Travel",Housekeeper,,
+"Hospitality, Food, and Travel",Restaurant Server,,
+"Hospitality, Food, and Travel",Cook,,
+"Hospitality, Food, and Travel",Chef,,
+"Hospitality, Food, and Travel",Bartender,,
+"Hospitality, Food, and Travel",Barista,,
+"Hospitality, Food, and Travel",Food Service Worker,,
+"Hospitality, Food, and Travel",Restaurant Manager,,
+"Hospitality, Food, and Travel",Event Coordinator,,
+"Hospitality, Food, and Travel",Travel Agent,,
+"Hospitality, Food, and Travel",Flight Attendant,,
+"Hospitality, Food, and Travel",Hotel Manager,,
+"Hospitality, Food, and Travel",Catering Manager,,
+"Legal, Government, and Public Safety",Lawyer / Attorney,Lawyer|Attorney,legal|litigation|contracts|compliance
+"Legal, Government, and Public Safety",Paralegal,,legal research|case management|documents
+"Legal, Government, and Public Safety",Legal Assistant,,
+"Legal, Government, and Public Safety",Compliance Officer,,
+"Legal, Government, and Public Safety",Police Officer,,
+"Legal, Government, and Public Safety",Firefighter,,
+"Legal, Government, and Public Safety",Security Officer,,
+"Legal, Government, and Public Safety",Correctional Officer,,
+"Legal, Government, and Public Safety",Court Clerk,,
+"Legal, Government, and Public Safety",Public Administrator,,
+"Legal, Government, and Public Safety",Policy Analyst,,
+"Legal, Government, and Public Safety",Government Program Analyst,,
+"Legal, Government, and Public Safety",Immigration Specialist,,
+"Legal, Government, and Public Safety",Contract Specialist,,
+"Science, Research, and Environment",Research Assistant,,
+"Science, Research, and Environment",Research Scientist,,research|experiments|publications|analysis
+"Science, Research, and Environment",Laboratory Technician,,
+"Science, Research, and Environment",Biologist,,
+"Science, Research, and Environment",Chemist,,
+"Science, Research, and Environment",Environmental Scientist,,
+"Science, Research, and Environment",Data Scientist,,machine learning|statistics|python|modeling|analytics
+"Science, Research, and Environment",Statistician,,
+"Science, Research, and Environment",Clinical Research Associate,,
+"Science, Research, and Environment",Quality Control Analyst,,
+"Science, Research, and Environment",Food Scientist,,
+"Science, Research, and Environment",Geologist,,
+"Media, Design, and Creative",Graphic Designer,,adobe|branding|visual design|layout
+"Media, Design, and Creative",Video Editor,,
+"Media, Design, and Creative",Photographer,,
+"Media, Design, and Creative",Content Creator,,
+"Media, Design, and Creative",Copywriter,,
+"Media, Design, and Creative",Journalist,,
+"Media, Design, and Creative",Editor,,
+"Media, Design, and Creative",Animator,,
+"Media, Design, and Creative",Motion Graphics Designer,,
+"Media, Design, and Creative",Art Director,,
+"Media, Design, and Creative",Creative Director,,
+"Media, Design, and Creative",UX Designer,,user research|wireframes|prototypes|figma
+"Media, Design, and Creative",UI Designer,,visual design|figma|design systems|ui
+"Media, Design, and Creative",Social Media Content Specialist,,
+Real Estate and Property,Real Estate Agent,,listings|buyers|sellers|real estate
+Real Estate and Property,Property Manager,,
+Real Estate and Property,Leasing Consultant,,
+Real Estate and Property,Mortgage Loan Officer,,
+Real Estate and Property,Appraiser,,
+Real Estate and Property,Real Estate Analyst,,
+Real Estate and Property,Maintenance Supervisor,,
+Real Estate and Property,Community Manager,,
+Real Estate and Property,Escrow Officer,,
+Real Estate and Property,Title Specialist,,
+"Agriculture, Food Production, and Natural Resources",Farm Worker,,
+"Agriculture, Food Production, and Natural Resources",Agricultural Technician,,
+"Agriculture, Food Production, and Natural Resources",Farm Manager,,
+"Agriculture, Food Production, and Natural Resources",Food Production Worker,,
+"Agriculture, Food Production, and Natural Resources",Quality Assurance Technician,,
+"Agriculture, Food Production, and Natural Resources",Animal Care Technician,,
+"Agriculture, Food Production, and Natural Resources",Forestry Worker,,
+"Agriculture, Food Production, and Natural Resources",Equipment Operator,,
+"Agriculture, Food Production, and Natural Resources",Agronomist,,
+"Agriculture, Food Production, and Natural Resources",Food Safety Specialist,,
+"Personal Care, Fitness, and Social Services",Social Worker,,case management|community|support services
+"Personal Care, Fitness, and Social Services",Case Manager,,
+"Personal Care, Fitness, and Social Services",Counselor,,
+"Personal Care, Fitness, and Social Services",Therapist,,mental health|counseling|treatment
+"Personal Care, Fitness, and Social Services",Childcare Worker,,
+"Personal Care, Fitness, and Social Services",Caregiver,,
+"Personal Care, Fitness, and Social Services",Personal Trainer,,
+"Personal Care, Fitness, and Social Services",Fitness Instructor,,
+"Personal Care, Fitness, and Social Services",Hairstylist,,
+"Personal Care, Fitness, and Social Services",Barber,,
+"Personal Care, Fitness, and Social Services",Cosmetologist,,
+"Personal Care, Fitness, and Social Services",Community Outreach Coordinator,,
+"Personal Care, Fitness, and Social Services",Nonprofit Program Coordinator,,

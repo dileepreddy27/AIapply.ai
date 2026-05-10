@@ -6,6 +6,7 @@ import math
 import re
 
 from .models import JobPosting
+from .role_catalog import get_role_record, get_role_records
 
 
 TOKEN_RE = re.compile(r"[a-zA-Z][a-zA-Z0-9+#.-]{1,}")
@@ -59,75 +60,6 @@ STOPWORDS = {
     "position",
 }
 
-ROLE_PRESETS: dict[str, list[str]] = {
-    "software_engineer": [
-        "software engineer",
-        "backend",
-        "frontend",
-        "full stack",
-        "python",
-        "java",
-        "javascript",
-        "react",
-        "api",
-        "microservices",
-        "distributed systems",
-    ],
-    "data_scientist": [
-        "data scientist",
-        "machine learning",
-        "statistics",
-        "python",
-        "sql",
-        "pandas",
-        "modeling",
-        "analytics",
-        "experimentation",
-    ],
-    "ml_engineer": [
-        "ml engineer",
-        "machine learning",
-        "pytorch",
-        "tensorflow",
-        "model serving",
-        "feature store",
-        "mlops",
-        "pipeline",
-        "inference",
-    ],
-    "nurse": [
-        "nurse",
-        "registered nurse",
-        "rn",
-        "clinical",
-        "patient care",
-        "charting",
-        "hospital",
-        "icu",
-        "medication",
-        "triage",
-    ],
-    "product_manager": [
-        "product manager",
-        "roadmap",
-        "stakeholder",
-        "kpi",
-        "user research",
-        "delivery",
-        "agile",
-    ],
-    "cybersecurity": [
-        "security",
-        "soc",
-        "siem",
-        "incident response",
-        "iam",
-        "cloud security",
-        "threat",
-        "vulnerability",
-    ],
-}
-
 
 @dataclass
 class MatchResult:
@@ -151,7 +83,60 @@ def extract_keywords(text: str, limit: int = 20) -> list[str]:
     return [t for t, _ in counts.most_common(limit)]
 
 
-def role_terms(selected_role: str, custom_role: str = "") -> tuple[str, list[str]]:
+def _record_blob(record: dict[str, object]) -> str:
+    fields: list[str] = [
+        str(record.get("label", "")),
+        str(record.get("category", "")),
+    ]
+    fields.extend(str(x) for x in record.get("aliases", []) or [])
+    fields.extend(str(x) for x in record.get("keywords", []) or [])
+    return " ".join(x for x in fields if x).strip()
+
+
+def role_suggestions(query: str, extra_roles: list[str] | None = None, limit: int = 20) -> list[str]:
+    records = get_role_records(extra_roles=extra_roles)
+    if not query.strip():
+        return [str(record["label"]) for record in records[:limit]]
+
+    q_lower = query.strip().lower()
+    q_tokens = set(extract_keywords(query, limit=12)) or set(tokenize(query))
+    scored: list[tuple[float, str]] = []
+
+    for record in records:
+        label = str(record.get("label", "")).strip()
+        label_lower = label.lower()
+        category_lower = str(record.get("category", "")).lower()
+        blob = _record_blob(record).lower()
+        blob_tokens = set(extract_keywords(blob, limit=30)) or set(tokenize(blob))
+        overlap = len(q_tokens & blob_tokens)
+
+        score = 0.0
+        if label_lower == q_lower:
+            score += 300.0
+        if label_lower.startswith(q_lower):
+            score += 120.0
+        if q_lower in label_lower:
+            score += 80.0
+        if q_lower in category_lower:
+            score += 25.0
+        if q_tokens:
+            score += overlap * 28.0
+            score += sum(1 for tok in q_tokens if tok in blob) * 8.0
+
+        if score > 0:
+            scored.append((score, label))
+
+    ranked = [label for _, label in sorted(scored, key=lambda item: (-item[0], item[1]))]
+    if ranked:
+        return ranked[:limit]
+    return [query.title()]
+
+
+def role_terms(
+    selected_role: str,
+    custom_role: str = "",
+    extra_roles: list[str] | None = None,
+) -> tuple[str, list[str]]:
     if selected_role == "custom":
         role_text = custom_role.strip()
     else:
@@ -160,10 +145,40 @@ def role_terms(selected_role: str, custom_role: str = "") -> tuple[str, list[str
     if not role_text:
         return "any", []
 
-    preset = ROLE_PRESETS.get(normalize_role_key(role_text))
-    if preset:
-        return role_text, extract_keywords(" ".join(preset), limit=30)
-    return role_text, extract_keywords(role_text, limit=30)
+    record = get_role_record(role_text, extra_roles=extra_roles)
+    if record:
+        blob = _record_blob(record)
+        return role_text, extract_keywords(blob, limit=40)
+
+    expansions = [role_text]
+    for label in role_suggestions(role_text, extra_roles=extra_roles, limit=5):
+        expansions.append(label)
+        matched_record = get_role_record(label, extra_roles=extra_roles)
+        if matched_record:
+            expansions.append(_record_blob(matched_record))
+    return role_text, extract_keywords(" ".join(expansions), limit=40)
+
+
+def _role_relevance(job: JobPosting, role_keywords: list[str], role_text: str) -> float:
+    if not role_keywords and role_text == "any":
+        return 0.0
+
+    blob = f"{job.title}\n{job.company}\n{job.location}\n{job.description[:2500]}".lower()
+    title_blob = job.title.lower()
+    role_kw = set(role_keywords)
+    overlap = set(tokenize(blob)) & role_kw
+
+    score = 0.0
+    role_phrase = role_text.lower().strip()
+    if role_phrase:
+        if role_phrase in title_blob:
+            score += 0.55
+        elif role_phrase in blob:
+            score += 0.25
+    if role_kw:
+        overlap_ratio = len(overlap) / max(1, min(len(role_kw), 8))
+        score += min(0.45, overlap_ratio * 0.45)
+    return min(score, 1.0)
 
 
 def _to_vector(tokens: list[str], idf: dict[str, float]) -> dict[str, float]:
@@ -178,8 +193,8 @@ def _cosine(a: dict[str, float], b: dict[str, float]) -> float:
     if not a or not b:
         return 0.0
     dot = 0.0
-    for k, v in a.items():
-        dot += v * b.get(k, 0.0)
+    for key, value in a.items():
+        dot += value * b.get(key, 0.0)
     na = math.sqrt(sum(v * v for v in a.values()))
     nb = math.sqrt(sum(v * v for v in b.values()))
     if na == 0 or nb == 0:
@@ -190,8 +205,8 @@ def _cosine(a: dict[str, float], b: dict[str, float]) -> float:
 def _build_idf(docs_tokens: list[list[str]]) -> dict[str, float]:
     n_docs = len(docs_tokens)
     df: Counter[str] = Counter()
-    for toks in docs_tokens:
-        for term in set(toks):
+    for tokens in docs_tokens:
+        for term in set(tokens):
             df[term] += 1
     return {term: math.log((n_docs + 1) / (freq + 1)) + 1.0 for term, freq in df.items()}
 
@@ -200,18 +215,7 @@ def filter_jobs_for_role(jobs: list[JobPosting], role_keywords: list[str], role_
     if not role_keywords or role_text == "any":
         return jobs
 
-    role_kw = set(extract_keywords(" ".join(role_keywords), limit=40))
-    filtered: list[JobPosting] = []
-    for job in jobs:
-        blob = f"{job.title} {job.description[:2000]}".lower()
-        tokens = set(tokenize(blob))
-        overlap = tokens & role_kw
-        if overlap:
-            filtered.append(job)
-            continue
-        if role_text.lower() in blob:
-            filtered.append(job)
-
+    filtered = [job for job in jobs if _role_relevance(job, role_keywords, role_text) >= 0.18]
     return filtered if filtered else jobs
 
 
@@ -243,14 +247,20 @@ def recommend_jobs_rag(
     for job, doc_tokens in zip(filtered_jobs, docs_tokens):
         doc_vec = _to_vector(doc_tokens, idf)
         rag_score = _cosine(query_vector, doc_vec)
+        role_score = _role_relevance(job, role_kw, role_text)
         baseline = (job.score or 0.0) / 5.0
-        final_score = 0.8 * rag_score + 0.2 * baseline
+        keyword_overlap = len(set(doc_tokens) & set(query_terms)) / max(1, min(len(set(query_terms)), 12))
+        final_score = (
+            0.55 * rag_score
+            + 0.25 * role_score
+            + 0.15 * min(keyword_overlap, 1.0)
+            + 0.05 * baseline
+        )
 
-        overlap = list((set(doc_tokens) & set(query_terms)))
-        overlap = sorted(overlap)[:8]
+        overlap = sorted(set(doc_tokens) & set(query_terms))[:8]
         explanation = (
             f"Matched on {len(overlap)} shared terms; "
-            f"rag={rag_score:.3f}, prior_score={job.score if job.score is not None else 0:.2f}"
+            f"rag={rag_score:.3f}, role_fit={role_score:.3f}, prior_score={job.score if job.score is not None else 0:.2f}"
         )
 
         scored.append(
@@ -258,10 +268,10 @@ def recommend_jobs_rag(
                 job=job,
                 rag_score=rag_score,
                 final_score=final_score,
-                overlap_terms=overlap,
+                overlap_terms=list(overlap),
                 explanation=explanation,
             )
         )
 
-    ranked = sorted(scored, key=lambda m: m.final_score, reverse=True)[:top_k]
+    ranked = sorted(scored, key=lambda match: match.final_score, reverse=True)[:top_k]
     return role_text, resume_kw[:12], ranked

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 from datetime import datetime, timezone
+from functools import lru_cache
 from io import BytesIO, StringIO
 import os
 from pathlib import Path
@@ -17,7 +18,7 @@ import stripe
 from supabase import Client, create_client
 
 from .models import JobPosting
-from .rag import MatchResult, recommend_jobs_rag
+from .rag import MatchResult, recommend_jobs_rag, role_suggestions
 from .scanners import scan_greenhouse, scan_lever
 from .storage import load_jobs
 
@@ -39,27 +40,28 @@ DEFAULT_JOBS_FILE = PROJECT_ROOT / "data" / "jobs.jsonl"
 DEFAULT_LINKEDIN_IMPORT = PROJECT_ROOT / "data" / "imports" / "linkedin_jobs.csv"
 DEFAULT_INDEED_IMPORT = PROJECT_ROOT / "data" / "imports" / "indeed_jobs.csv"
 
-DEFAULT_ROLES = [
-    "Software Engineer",
-    "Data Scientist",
-    "ML Engineer",
-    "Nurse",
-    "Product Manager",
-    "Cybersecurity Analyst",
-    "DevOps Engineer",
-    "QA Engineer",
-]
 DEFAULT_GREENHOUSE_BOARDS = [
-    "openai",
-    "anthropic",
-    "mistral",
     "vercel",
-    "retool",
+    "stripe",
+    "datadog",
+    "scaleai",
+    "fivetran",
+    "robinhood",
+    "brex",
+    "airtable",
+    "discord",
+    "webflow",
+    "dropbox",
+    "checkr",
+    "asana",
+    "cloudflare",
+    "yugabyte",
+    "samsara",
+    "headway",
+    "growtherapy",
+    "transcarent",
 ]
-DEFAULT_LEVER_SITES = [
-    "lever",
-    "n8n",
-]
+DEFAULT_LEVER_SITES: list[str] = []
 
 
 def _cors_origins() -> list[str]:
@@ -111,8 +113,9 @@ def _text_matches_query(job: JobPosting, query: str) -> bool:
     if not q:
         return True
     text = f"{job.title} {job.company} {job.location} {job.description[:2500]}".lower()
-    tokens = [tok for tok in re.split(r"\s+", q) if tok]
-    return any(tok in text for tok in tokens) or q in text
+    tokens = [tok for tok in re.split(r"\s+", q) if tok and len(tok) > 1]
+    hits = sum(1 for tok in tokens if tok in text)
+    return q in text or hits >= max(1, min(2, len(tokens)))
 
 
 def _dedupe_jobs(jobs: list[JobPosting]) -> list[JobPosting]:
@@ -125,30 +128,62 @@ def _dedupe_jobs(jobs: list[JobPosting]) -> list[JobPosting]:
     return list(by_url.values())
 
 
-def _discover_live_jobs(query: str, limit: int = 250) -> list[JobPosting]:
+def _discover_live_jobs_with_diagnostics(query: str, limit: int = 250) -> tuple[list[JobPosting], dict[str, Any]]:
     jobs: list[JobPosting] = []
+    diagnostics: dict[str, Any] = {
+        "imports_loaded": 0,
+        "sources_checked": 0,
+        "sources_succeeded": 0,
+        "source_counts": [],
+        "source_errors": [],
+    }
 
     # 1) Local import fallbacks if user uploaded LinkedIn/Indeed lists.
-    jobs.extend(_load_import_jobs(DEFAULT_LINKEDIN_IMPORT, "linkedin"))
-    jobs.extend(_load_import_jobs(DEFAULT_INDEED_IMPORT, "indeed"))
+    imported_linkedin = _load_import_jobs(DEFAULT_LINKEDIN_IMPORT, "linkedin")
+    imported_indeed = _load_import_jobs(DEFAULT_INDEED_IMPORT, "indeed")
+    jobs.extend(imported_linkedin)
+    jobs.extend(imported_indeed)
+    diagnostics["imports_loaded"] = len(imported_linkedin) + len(imported_indeed)
 
     # 2) Public ATS sources (Greenhouse + Lever).
     for token in _split_env_list("LIVE_GREENHOUSE_BOARDS", DEFAULT_GREENHOUSE_BOARDS):
+        diagnostics["sources_checked"] += 1
         try:
-            jobs.extend(scan_greenhouse(token))
-        except Exception:
+            scanned = scan_greenhouse(token)
+            jobs.extend(scanned)
+            diagnostics["sources_succeeded"] += 1
+            diagnostics["source_counts"].append(
+                {"source": "greenhouse", "token": token, "jobs": len(scanned)}
+            )
+        except Exception as exc:
+            if len(diagnostics["source_errors"]) < 8:
+                diagnostics["source_errors"].append(f"greenhouse:{token}:{exc}")
             continue
     for site in _split_env_list("LIVE_LEVER_SITES", DEFAULT_LEVER_SITES):
+        diagnostics["sources_checked"] += 1
         try:
-            jobs.extend(scan_lever(site))
-        except Exception:
+            scanned = scan_lever(site)
+            jobs.extend(scanned)
+            diagnostics["sources_succeeded"] += 1
+            diagnostics["source_counts"].append(
+                {"source": "lever", "token": site, "jobs": len(scanned)}
+            )
+        except Exception as exc:
+            if len(diagnostics["source_errors"]) < 8:
+                diagnostics["source_errors"].append(f"lever:{site}:{exc}")
             continue
 
     jobs = _dedupe_jobs(jobs)
     matched = [j for j in jobs if _text_matches_query(j, query)]
-    if not matched:
-        matched = jobs
-    return matched[:limit]
+    diagnostics["scanned_jobs"] = len(jobs)
+    diagnostics["query_filtered_jobs"] = len(matched)
+    selected = matched if matched else jobs
+    return selected[:limit], diagnostics
+
+
+def _discover_live_jobs(query: str, limit: int = 250) -> list[JobPosting]:
+    jobs, _ = _discover_live_jobs_with_diagnostics(query, limit=limit)
+    return jobs
 
 
 def _clean_price_id(raw: str) -> str:
@@ -180,6 +215,7 @@ def _profile_context_blob(profile: dict[str, Any] | None) -> str:
     return "\n".join(x for x in fields if x)
 
 
+@lru_cache(maxsize=1)
 def _fetch_roles_from_google_form_csv() -> list[str]:
     """
     Expected GOOGLE_FORM_ROLES_CSV_URL to be a public Google Sheet CSV export URL.
@@ -201,7 +237,7 @@ def _fetch_roles_from_google_form_csv() -> list[str]:
                 cell = (value or "").strip()
                 if not cell:
                     continue
-                for part in re.split(r"[|,/;]+", cell):
+                for part in re.split(r"[|,/;\n]+", cell):
                     role = part.strip()
                     if role:
                         roles.add(role)
@@ -211,14 +247,8 @@ def _fetch_roles_from_google_form_csv() -> list[str]:
 
 
 def _search_roles(query: str) -> list[str]:
-    pool = _fetch_roles_from_google_form_csv()
-    if not pool:
-        pool = DEFAULT_ROLES
-    q = (query or "").strip().lower()
-    if not q:
-        return pool[:20]
-    out = [r for r in pool if q in r.lower()]
-    return out[:20]
+    extra_roles = _fetch_roles_from_google_form_csv()
+    return role_suggestions(query, extra_roles=extra_roles, limit=20)
 
 
 def _send_application_confirmation_email(to_email: str, role: str, job: JobPosting) -> bool:
@@ -643,14 +673,15 @@ async def rag_match(
     query_role = (custom_role.strip() if role == "custom" else role.strip()) or role
 
     jobs: list[JobPosting] = load_jobs(DEFAULT_JOBS_FILE)
-    if not jobs:
-        jobs = _discover_live_jobs(query_role)
+    live_jobs, discovery_diagnostics = _discover_live_jobs_with_diagnostics(query_role, limit=400)
+    if live_jobs:
+        jobs = _dedupe_jobs([*jobs, *live_jobs])
     if not jobs:
         raise HTTPException(
             status_code=400,
             detail=(
-                "No jobs found. Add imports in data/imports CSVs or configure LIVE_GREENHOUSE_BOARDS/"
-                "LIVE_LEVER_SITES env vars."
+                "No jobs found from configured imports or live ATS sources. Add imports in data/imports CSVs "
+                "or configure LIVE_GREENHOUSE_BOARDS/LIVE_LEVER_SITES env vars."
             ),
         )
 
@@ -674,12 +705,32 @@ async def rag_match(
         custom_role=custom_role,
         top_k=max(1, min(top_k, 50)),
     )
-    results = _results_to_cards(matched, min_score=min_score / 5.0)
+    strict_threshold = min_score / 5.0
+    results = _results_to_cards(matched, min_score=strict_threshold)
+    used_fallback = False
+    message = f"Found {len(results)} matching jobs from {len(jobs)} scanned openings."
+    if not results and matched:
+        used_fallback = True
+        results = _results_to_cards(matched, min_score=0.0)
+        message = (
+            f"No jobs cleared the strict threshold for '{selected_role_label}'. "
+            f"Showing the best available matches from {len(jobs)} scanned openings instead."
+        )
+    elif not matched:
+        message = (
+            f"Scanned {len(jobs)} openings but did not find a close fit for '{selected_role_label}' yet. "
+            "Try broader keywords such as backend, python, react, data, nurse, or remote."
+        )
     return {
         "role": selected_role_label,
         "resume_keywords": resume_keywords,
         "count": len(results),
         "results": results,
+        "scanned_jobs": len(jobs),
+        "live_jobs": len(live_jobs),
+        "used_fallback": used_fallback,
+        "message": message,
+        "source_diagnostics": discovery_diagnostics,
     }
 
 

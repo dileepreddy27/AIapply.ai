@@ -66,6 +66,7 @@ export default function DashboardPage() {
   const [resumeFile, setResumeFile] = useState<File | null>(null);
   const [results, setResults] = useState<MatchResult[]>([]);
   const [roleSuggestions, setRoleSuggestions] = useState<string[]>([]);
+  const [roleInputDirty, setRoleInputDirty] = useState(false);
 
   const canRunMatch = useMemo(() => !!token && !!resumeFile, [token, resumeFile]);
 
@@ -82,16 +83,27 @@ export default function DashboardPage() {
       setToken(session.access_token);
       setUserEmail(session.user.email ?? "");
       setLoading(false);
-      await Promise.all([
-        loadProfile(session.access_token),
-        fetchRoleSuggestions("", session.access_token),
-      ]);
+      await loadProfile(session.access_token);
     }
     bootstrap();
     return () => {
       mounted = false;
     };
   }, [router]);
+
+  useEffect(() => {
+    if (!token || !isBackendConfigured()) return;
+    if (!roleInputDirty) return;
+    const query = targetRole.trim();
+    if (query.length < 2) {
+      setRoleSuggestions([]);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      void fetchRoleSuggestions(query);
+    }, 180);
+    return () => window.clearTimeout(timer);
+  }, [backendUrl, targetRole, token]);
 
   function isBackendConfigured(): boolean {
     return !!backendUrl && /^https?:\/\//.test(backendUrl);
@@ -113,6 +125,10 @@ export default function DashboardPage() {
 
   async function fetchRoleSuggestions(query: string, accessToken: string = token): Promise<void> {
     if (!isBackendConfigured()) return;
+    if (query.trim().length < 2) {
+      setRoleSuggestions([]);
+      return;
+    }
     try {
       const res = await fetch(
         `${backendUrl}/api/roles/search?q=${encodeURIComponent(query)}`,
@@ -248,7 +264,10 @@ export default function DashboardPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data?.detail ?? "Match request failed.");
       setResults(data.results ?? []);
-      setMessage(`Found ${data.count ?? 0} matching jobs.`);
+      setMessage(
+        data?.message ??
+          `Found ${data.count ?? 0} matching jobs from ${data.scanned_jobs ?? 0} scanned openings.`
+      );
     } catch (err) {
       const text = err instanceof Error ? err.message : "Failed to match jobs.";
       if (text === "Failed to fetch") {
@@ -358,19 +377,34 @@ export default function DashboardPage() {
           <label>
             Target Role
             <input
-              list="role-suggestions"
               value={targetRole}
               onChange={(e) => {
+                setRoleInputDirty(true);
                 setTargetRole(e.target.value);
-                void fetchRoleSuggestions(e.target.value);
               }}
-              placeholder="e.g. Software Engineer, Nurse, Data Analyst"
+              placeholder="Type keywords like python, backend, llm, nurse, data"
             />
-            <datalist id="role-suggestions">
-              {roleSuggestions.map((role) => (
-                <option key={role} value={role} />
-              ))}
-            </datalist>
+            <span className="field-hint">
+              Suggestions adapt to your keywords. You can also keep any custom role you type.
+            </span>
+            {roleSuggestions.length > 0 && (
+              <div className="suggestion-list" role="listbox" aria-label="Target role suggestions">
+                {roleSuggestions.map((role) => (
+                  <button
+                    key={role}
+                    type="button"
+                    className={`suggestion-chip${role === targetRole ? " selected" : ""}`}
+                    onClick={() => {
+                      setRoleInputDirty(true);
+                      setTargetRole(role);
+                      setRoleSuggestions([]);
+                    }}
+                  >
+                    {role}
+                  </button>
+                ))}
+              </div>
+            )}
           </label>
           <label>
             Experience Level
