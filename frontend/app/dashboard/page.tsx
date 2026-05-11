@@ -900,6 +900,29 @@ export default function DashboardPage() {
     };
   }
 
+  function getPermissionRequestForJob(job: MatchResult): PermissionRequest | undefined {
+    return permissionRequests.find(
+      (item) =>
+        item.source_url === job.url ||
+        (item.company.toLowerCase() === job.company.toLowerCase() &&
+          item.title.toLowerCase() === job.title.toLowerCase())
+    );
+  }
+
+  function openPermissionRequired(job: MatchResult): void {
+    const existing = getPermissionRequestForJob(job);
+    const targetUrl = normalizeBookmarkWebsite(existing?.application_url || job.url);
+    setPermissionCaptureJobId(job.url);
+    setPermissionApplicationUrl(existing?.application_url || job.url);
+    setPermissionNote(existing?.note || "");
+    if (targetUrl && typeof window !== "undefined") {
+      window.open(targetUrl, "_blank", "noopener,noreferrer");
+      setMessage("Opened the application page in a new tab. Save the direct application URL here if you want it queued for Auto Apply.");
+      return;
+    }
+    setMessage("Add a direct application URL for this permission-required job.");
+  }
+
   async function addJobToAutoApplyQueue(
     job: MatchResult,
     overrides: Partial<AutoApplyQueueItem> = {},
@@ -1542,6 +1565,18 @@ export default function DashboardPage() {
                     <p>{job.company} | {job.location} | {job.source}</p>
                     {job.application_url && <p className="bookmark-url">Application URL: {job.application_url}</p>}
                     <div className="feature-actions">
+                      <button
+                        type="button"
+                        className="ghost"
+                        onClick={() => {
+                          const targetUrl = normalizeBookmarkWebsite(job.application_url || job.url);
+                          if (targetUrl && typeof window !== "undefined") {
+                            window.open(targetUrl, "_blank", "noopener,noreferrer");
+                          }
+                        }}
+                      >
+                        Open Application Page
+                      </button>
                       <button type="button" className="ghost" onClick={() => void removeQueuedJob(job.id)}>
                         Remove
                       </button>
@@ -1746,11 +1781,7 @@ export default function DashboardPage() {
                       <button
                         type="button"
                         className="ghost"
-                        onClick={() => {
-                          setPermissionCaptureJobId(job.url);
-                          setPermissionApplicationUrl(job.url);
-                          setPermissionNote("");
-                        }}
+                        onClick={() => openPermissionRequired(job)}
                       >
                         Permission Required
                       </button>
@@ -1777,6 +1808,18 @@ export default function DashboardPage() {
                           />
                         </label>
                         <div className="feature-actions">
+                          <button
+                            type="button"
+                            className="ghost"
+                            onClick={() => {
+                              const targetUrl = normalizeBookmarkWebsite(permissionApplicationUrl || job.url);
+                              if (targetUrl && typeof window !== "undefined") {
+                                window.open(targetUrl, "_blank", "noopener,noreferrer");
+                              }
+                            }}
+                          >
+                            Open Application Page
+                          </button>
                           <button type="button" onClick={() => void savePermissionRequest(job)}>
                             Save Permission URL
                           </button>
