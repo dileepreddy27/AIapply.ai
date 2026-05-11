@@ -657,6 +657,8 @@ class ProfileUpsertRequest(BaseModel):
     minimum_match_score: float = 30.0
     application_summary: str = ""
     bookmarks: list[dict[str, Any]] = []
+    permission_requests: list[dict[str, Any]] = []
+    auto_apply_queue: list[dict[str, Any]] = []
     sub_profiles: list[dict[str, Any]] = []
     active_sub_profile_id: str = ""
 
@@ -672,6 +674,7 @@ class AutoApplyRequest(BaseModel):
     role: str = ""
     custom_role: str = ""
     max_jobs: int = 8
+    selected_jobs: list[dict[str, Any]] = []
 
 
 class AssistantChatRequest(BaseModel):
@@ -924,6 +927,147 @@ def _run_auto_apply_for_profile(
     }
 
 
+def _queue_selected_jobs_for_profile(
+    sb: Client,
+    user_id: str,
+    user_email: str,
+    profile: dict[str, Any],
+    role_query: str,
+    selected_jobs: list[dict[str, Any]],
+    max_jobs: int | None = None,
+    plan_max_auto_apply_per_day: int | None = None,
+) -> dict[str, Any]:
+    app_profile = profile.get("application_profile") or {}
+    auto_enabled = bool(app_profile.get("auto_apply_enabled"))
+    auto_consent = bool(app_profile.get("auto_apply_consent"))
+    if not auto_enabled or not auto_consent:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Auto Apply requires explicit consent. Enable auto_apply_enabled and "
+                "auto_apply_consent in profile settings first."
+            ),
+        )
+
+    daily_cap = max(1, min(int(app_profile.get("max_applications_per_day", 10) or 10), 50))
+    if plan_max_auto_apply_per_day is not None and plan_max_auto_apply_per_day > 0:
+        daily_cap = min(daily_cap, plan_max_auto_apply_per_day)
+    if max_jobs is not None:
+        daily_cap = min(daily_cap, max(1, min(max_jobs, 50)))
+
+    existing_today = _count_today_applications(sb, user_id)
+    available_slots = max(0, daily_cap - existing_today)
+    if available_slots == 0:
+        return {
+            "role": role_query,
+            "matched_jobs": len(selected_jobs),
+            "queued_applications": 0,
+            "email_confirmations_sent": 0,
+            "message": "Daily auto-apply limit already reached for this user.",
+        }
+
+    avoid_text = str(app_profile.get("companies_to_avoid", "") or "")
+    avoid_companies = {x.strip().lower() for x in avoid_text.split(",") if x.strip()}
+    require_approval = bool(app_profile.get("require_approval_before_apply", True))
+    minimum_match_score = float(app_profile.get("minimum_match_score", 30.0) or 30.0)
+
+    candidates = []
+    for raw in selected_jobs:
+        if not isinstance(raw, dict):
+            continue
+        company = str(raw.get("company", "") or "").strip()
+        title = str(raw.get("title", "") or "").strip()
+        location = str(raw.get("location", "") or "").strip()
+        source_url = str(raw.get("url", "") or "").strip()
+        application_url = str(raw.get("application_url", "") or "").strip()
+        permission_required = bool(raw.get("permission_required"))
+        final_score = raw.get("final_score")
+        if company.lower() in avoid_companies:
+            continue
+        if final_score is not None:
+            try:
+                normalized_score = float(final_score) * 20.0
+                if normalized_score < minimum_match_score:
+                    continue
+            except Exception:
+                pass
+        if not source_url and not application_url:
+            continue
+        candidates.append({
+            "company": company or "Unknown Company",
+            "title": title or "Unknown Role",
+            "location": location or "Unknown Location",
+            "source_url": source_url,
+            "application_url": application_url,
+            "permission_required": permission_required,
+            "posted_relative": str(raw.get("posted_relative", "") or "").strip(),
+            "source": str(raw.get("source", "") or "").strip(),
+        })
+
+    candidates = candidates[:available_slots]
+    queued = 0
+    emails_sent = 0
+    permission_count = 0
+
+    for job in candidates:
+        try:
+            effective_url = job["application_url"] or job["source_url"]
+            notes_parts = []
+            if job["permission_required"]:
+                permission_count += 1
+                notes_parts.append("Permission-required application URL provided by user.")
+            if job["application_url"] and job["source_url"] and job["application_url"] != job["source_url"]:
+                notes_parts.append(f"Original source URL: {job['source_url']}")
+            if job["posted_relative"]:
+                notes_parts.append(f"Posted: {job['posted_relative']}")
+            if job["source"]:
+                notes_parts.append(f"Source: {job['source']}")
+            notes_parts.append(
+                "Awaiting user approval before submission."
+                if require_approval
+                else "Queued by AIapply.ai auto-apply workflow."
+            )
+            sb.table("applications").insert(
+                {
+                    "user_id": user_id,
+                    "job_url": effective_url,
+                    "company": job["company"],
+                    "title": job["title"],
+                    "location": job["location"],
+                    "status": "approval_required" if require_approval else "queued_auto_apply",
+                    "notes": " ".join(notes_parts),
+                }
+            ).execute()
+            queued += 1
+            email_job = JobPosting(
+                id=f"manual:{effective_url}",
+                source=str(job.get("source") or "manual"),
+                company=job["company"],
+                title=job["title"],
+                location=job["location"],
+                url=effective_url,
+                description="",
+            )
+            if _send_application_confirmation_email(
+                to_email=user_email,
+                role=role_query,
+                job=email_job,
+            ):
+                emails_sent += 1
+        except Exception:
+            continue
+
+    mode_text = "approval-required mode" if require_approval else "auto-queue mode"
+    permission_text = f" {permission_count} permission-required jobs included." if permission_count else ""
+    return {
+        "role": role_query,
+        "matched_jobs": len(candidates),
+        "queued_applications": queued,
+        "email_confirmations_sent": emails_sent,
+        "message": f"Auto Apply completed in {mode_text}.{permission_text}",
+    }
+
+
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
     return {"status": "ok"}
@@ -1001,6 +1145,8 @@ def upsert_profile(
             "minimum_match_score": body.minimum_match_score,
             "summary": body.application_summary,
             "bookmarks": body.bookmarks,
+            "permission_requests": body.permission_requests,
+            "auto_apply_queue": body.auto_apply_queue,
             "sub_profiles": sub_profiles,
             "active_sub_profile_id": body.active_sub_profile_id,
         },
@@ -1406,6 +1552,17 @@ def auto_apply_run(
         "target_role", ""
     )
     max_jobs = max(1, min(body.max_jobs, 20))
+    if body.selected_jobs:
+        return _queue_selected_jobs_for_profile(
+            sb=sb,
+            user_id=user_id,
+            user_email=str(user.get("email", "")),
+            profile=profile,
+            role_query=role_query,
+            selected_jobs=body.selected_jobs,
+            max_jobs=max_jobs,
+            plan_max_auto_apply_per_day=int(subscription["features"]["max_auto_apply_per_day"]),
+        )
     return _run_auto_apply_for_profile(
         sb=sb,
         user_id=user_id,

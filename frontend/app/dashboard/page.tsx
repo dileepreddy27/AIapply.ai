@@ -45,6 +45,31 @@ type DiscoveryDiagnostics = {
   source_errors: string[];
 };
 
+
+type PermissionRequest = {
+  id: string;
+  company: string;
+  title: string;
+  source_url: string;
+  application_url: string;
+  note?: string;
+  created_at: string;
+};
+
+type AutoApplyQueueItem = {
+  id: string;
+  title: string;
+  company: string;
+  location: string;
+  source: string;
+  url: string;
+  posted_relative?: string;
+  final_score: number;
+  ats_score: number;
+  permission_required: boolean;
+  application_url: string;
+};
+
 type SubProfile = {
   id: string;
   name: string;
@@ -223,6 +248,11 @@ export default function DashboardPage() {
   const [bookmarkCompany, setBookmarkCompany] = useState("");
   const [bookmarkWebsite, setBookmarkWebsite] = useState("");
   const [bookmarkNote, setBookmarkNote] = useState("");
+  const [permissionRequests, setPermissionRequests] = useState<PermissionRequest[]>([]);
+  const [permissionCaptureJobId, setPermissionCaptureJobId] = useState("");
+  const [permissionApplicationUrl, setPermissionApplicationUrl] = useState("");
+  const [permissionNote, setPermissionNote] = useState("");
+  const [autoApplyQueue, setAutoApplyQueue] = useState<AutoApplyQueueItem[]>([]);
 
   const [resumeFile, setResumeFile] = useState<File | null>(null);
   const [results, setResults] = useState<MatchResult[]>([]);
@@ -625,6 +655,24 @@ export default function DashboardPage() {
       setMaxApplicationsPerDay(String(app.max_applications_per_day ?? 10));
       setMinimumMatchScore(String(app.minimum_match_score ?? 30));
       setBookmarks(Array.isArray(app.bookmarks) ? app.bookmarks : []);
+      setPermissionRequests(Array.isArray(app.permission_requests) ? app.permission_requests : []);
+      setAutoApplyQueue(
+        Array.isArray(app.auto_apply_queue)
+          ? (app.auto_apply_queue as Array<Record<string, unknown>>).map((item) => ({
+              id: String(item?.id ?? ""),
+              title: String(item?.title ?? ""),
+              company: String(item?.company ?? ""),
+              location: String(item?.location ?? ""),
+              source: String(item?.source ?? ""),
+              url: String(item?.url ?? ""),
+              posted_relative: String(item?.posted_relative ?? ""),
+              final_score: Number(item?.final_score ?? 0),
+              ats_score: Number(item?.ats_score ?? 0),
+              permission_required: Boolean(item?.permission_required),
+              application_url: String(item?.application_url ?? ""),
+            }))
+          : []
+      );
       setSubProfiles(Array.isArray(app.sub_profiles) ? app.sub_profiles : []);
       setActiveSubProfileId(app.active_sub_profile_id ?? "");
     } catch (err) {
@@ -707,6 +755,8 @@ export default function DashboardPage() {
       minimum_match_score: Number(minimumMatchScore || "30"),
       application_summary: applicationSummary,
       bookmarks,
+      permission_requests: permissionRequests,
+      auto_apply_queue: autoApplyQueue,
       sub_profiles: subProfiles,
       active_sub_profile_id: activeSubProfileId,
       ...overrides
@@ -832,6 +882,95 @@ export default function DashboardPage() {
     }
   }
 
+
+  function buildQueueItem(job: MatchResult, overrides: Partial<AutoApplyQueueItem> = {}): AutoApplyQueueItem {
+    return {
+      id: `${job.company.toLowerCase()}::${job.title.toLowerCase()}::${job.url.toLowerCase()}`,
+      title: job.title,
+      company: job.company,
+      location: job.location,
+      source: job.source,
+      url: job.url,
+      posted_relative: job.posted_relative,
+      final_score: job.final_score,
+      ats_score: job.ats_score,
+      permission_required: false,
+      application_url: "",
+      ...overrides,
+    };
+  }
+
+  async function addJobToAutoApplyQueue(
+    job: MatchResult,
+    overrides: Partial<AutoApplyQueueItem> = {},
+    nextPermissionRequests: PermissionRequest[] = permissionRequests
+  ): Promise<void> {
+    const nextItem = buildQueueItem(job, overrides);
+    const nextQueue = [nextItem, ...autoApplyQueue.filter((item) => item.id !== nextItem.id)];
+    setAutoApplyQueue(nextQueue);
+    setActiveStep("auto_apply");
+    setMessage(`${job.title} moved into the Auto Apply queue.`);
+    await persistProfile(
+      buildProfilePayload({
+        permission_requests: nextPermissionRequests,
+        auto_apply_queue: nextQueue,
+      }),
+      {
+        advanceStep: null,
+        silent: true,
+        successMessage: null,
+      }
+    );
+  }
+
+  async function savePermissionRequest(job: MatchResult): Promise<void> {
+    const applicationUrl = normalizeBookmarkWebsite(permissionApplicationUrl || job.url);
+    if (!applicationUrl) {
+      setMessage("Add an application URL before saving a permission-required job.");
+      return;
+    }
+    const requestId = `${job.company.toLowerCase()}::${job.title.toLowerCase()}::${applicationUrl.toLowerCase()}`;
+    const nextPermissionRequests: PermissionRequest[] = [
+      {
+        id: requestId,
+        company: job.company,
+        title: job.title,
+        source_url: job.url,
+        application_url: applicationUrl,
+        note: permissionNote.trim(),
+        created_at: new Date().toISOString(),
+      },
+      ...permissionRequests.filter((item) => item.id !== requestId),
+    ];
+    setPermissionRequests(nextPermissionRequests);
+    setPermissionCaptureJobId("");
+    setPermissionApplicationUrl("");
+    setPermissionNote("");
+    await addJobToAutoApplyQueue(
+      job,
+      {
+        permission_required: true,
+        application_url: applicationUrl,
+      },
+      nextPermissionRequests
+    );
+  }
+
+  async function removeQueuedJob(jobId: string): Promise<void> {
+    const nextQueue = autoApplyQueue.filter((item) => item.id !== jobId);
+    setAutoApplyQueue(nextQueue);
+    await persistProfile(
+      buildProfilePayload({
+        auto_apply_queue: nextQueue,
+      }),
+      {
+        advanceStep: null,
+        silent: true,
+        successMessage: null,
+      }
+    );
+  }
+
   async function runMatch(): Promise<void> {
     if (!isBackendConfigured()) {
       setMessage(backendConfigMessage());
@@ -894,16 +1033,29 @@ export default function DashboardPage() {
     }
     const saved = await saveProfile({ advanceStep: null, silent: true, successMessage: null });
     if (!saved) return;
+    const selectedJobs = autoApplyQueue.length
+      ? autoApplyQueue
+      : filteredResults.slice(0, 12).map((job) => buildQueueItem(job));
+    if (!selectedJobs.length) {
+      setMessage("Move matched jobs into Auto Apply first, or run matching to build a queue.");
+      return;
+    }
     try {
       const res = await authFetch(`${backendUrl}/api/auto-apply/run`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ role: "custom", custom_role: targetRole, max_jobs: 12 })
+        body: JSON.stringify({
+          role: "custom",
+          custom_role: targetRole,
+          max_jobs: 12,
+          selected_jobs: selectedJobs,
+        })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.detail ?? "Auto Apply failed.");
       await loadApplications();
       await loadSubscription();
+      setAutoApplyQueue([]);
       setShowApplications(true);
       setActiveStep("analytics");
       setMessage(
@@ -912,6 +1064,10 @@ export default function DashboardPage() {
       );
     } catch (err) {
       const detail = err instanceof Error ? err.message : "Auto Apply failed.";
+      if (detail === "Failed to fetch") {
+        setMessage("Auto Apply could not reach the backend. Redeploy Render with the latest code, then try again.");
+        return;
+      }
       setMessage(detail);
     }
   }
@@ -1366,6 +1522,34 @@ export default function DashboardPage() {
               Live discovery uses Greenhouse and Lever directly, and also supports LinkedIn, Indeed,
               and other portal imports from the backend `data/imports` folder.
             </p>
+            <div className="queue-stat-row">
+              <span className="topbar-chip">{autoApplyQueue.length} queued jobs</span>
+              <span className="topbar-chip">{permissionRequests.length} permission-required links</span>
+              <span className="topbar-chip">{requireApprovalBeforeApply ? "Approval mode" : "Hands-free queue mode"}</span>
+            </div>
+            <div className="queue-preview-list">
+              {autoApplyQueue.length === 0 ? (
+                <p className="empty-state">No jobs in the Auto Apply queue yet. Use Move To Auto Apply or Permission Required from matched jobs.</p>
+              ) : (
+                autoApplyQueue.slice(0, 10).map((job) => (
+                  <article key={job.id} className="queue-preview-card">
+                    <div className="application-topline">
+                      <h4>{job.title}</h4>
+                      <span className={`status-pill ${job.permission_required ? "approval_required" : "queued_auto_apply"}`}>
+                        {job.permission_required ? "permission required" : "queued"}
+                      </span>
+                    </div>
+                    <p>{job.company} | {job.location} | {job.source}</p>
+                    {job.application_url && <p className="bookmark-url">Application URL: {job.application_url}</p>}
+                    <div className="feature-actions">
+                      <button type="button" className="ghost" onClick={() => void removeQueuedJob(job.id)}>
+                        Remove
+                      </button>
+                    </div>
+                  </article>
+                ))
+              )}
+            </div>
             <div className="dashboard-form-grid">
               <label>
                 Work Authorization
@@ -1559,10 +1743,57 @@ export default function DashboardPage() {
                       <button type="button" className="ghost" onClick={() => void bookmarkJob(job)}>
                         Bookmark
                       </button>
-                      <button type="button" className="ghost" onClick={() => setActiveStep("auto_apply")}>
+                      <button
+                        type="button"
+                        className="ghost"
+                        onClick={() => {
+                          setPermissionCaptureJobId(job.url);
+                          setPermissionApplicationUrl(job.url);
+                          setPermissionNote("");
+                        }}
+                      >
+                        Permission Required
+                      </button>
+                      <button type="button" className="ghost" onClick={() => void addJobToAutoApplyQueue(job)}>
                         Move To Auto Apply
                       </button>
                     </div>
+                    {permissionCaptureJobId === job.url && (
+                      <div className="permission-panel">
+                        <label className="dashboard-field-wide">
+                          Application URL
+                          <input
+                            value={permissionApplicationUrl}
+                            onChange={(e) => setPermissionApplicationUrl(e.target.value)}
+                            placeholder="Paste the direct application page URL"
+                          />
+                        </label>
+                        <label className="dashboard-field-wide">
+                          Note (optional)
+                          <input
+                            value={permissionNote}
+                            onChange={(e) => setPermissionNote(e.target.value)}
+                            placeholder="Any note about access or recruiter permission"
+                          />
+                        </label>
+                        <div className="feature-actions">
+                          <button type="button" onClick={() => void savePermissionRequest(job)}>
+                            Save Permission URL
+                          </button>
+                          <button
+                            type="button"
+                            className="ghost"
+                            onClick={() => {
+                              setPermissionCaptureJobId("");
+                              setPermissionApplicationUrl("");
+                              setPermissionNote("");
+                            }}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </article>
                 ))
               )}

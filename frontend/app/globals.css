@@ -501,6 +501,16 @@ button:disabled {
   gap: 0.45rem;
 }
 
+.permission-panel {
+  margin-top: 0.7rem;
+  padding: 0.85rem;
+  border-radius: 16px;
+  border: 1px solid rgba(125, 213, 191, 0.12);
+  background: rgba(7, 24, 24, 0.72);
+  display: grid;
+  gap: 0.7rem;
+}
+
 .job-row-meta a {
   color: #84f2d7;
   font-weight: 700;
