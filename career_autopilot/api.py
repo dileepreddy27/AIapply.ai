@@ -28,8 +28,9 @@ from .profile_options import company_matches_ranking, get_profile_option_payload
 from .plans import ACTIVE_SUBSCRIPTION_STATUSES, COMPETITIVE_ADVANTAGES, get_plan_definition, normalize_plan
 from .rag import MatchResult, recommend_jobs_rag, role_suggestions
 from .role_catalog import get_roles_for_sector
-from .scanners import scan_greenhouse, scan_lever
+from .scanners import scan_ashby, scan_greenhouse, scan_lever
 from .storage import load_jobs
+from .tailoring import TAILOR_MODES, run_tailoring
 
 try:
     from pypdf import PdfReader
@@ -76,6 +77,16 @@ DEFAULT_GREENHOUSE_BOARDS = [
     "transcarent",
 ]
 DEFAULT_LEVER_SITES: list[str] = []
+DEFAULT_ASHBY_ORGS = [
+    "ramp",
+    "openai",
+    "notion",
+    "linear",
+    "runway",
+    "mercury",
+    "clipboardhealth",
+    "vanta",
+]
 
 
 def _cors_origins() -> list[str]:
@@ -177,6 +188,7 @@ def _discover_live_jobs_with_diagnostics(
     limit: int = 600,
     greenhouse_limit: int | None = None,
     lever_limit: int | None = None,
+    ashby_limit: int | None = None,
 ) -> tuple[list[JobPosting], dict[str, Any]]:
     jobs: list[JobPosting] = []
     diagnostics: dict[str, Any] = {
@@ -238,6 +250,23 @@ def _discover_live_jobs_with_diagnostics(
                 diagnostics["source_errors"].append(f"lever:{site}:{exc}")
             continue
 
+    ashby_orgs = _split_env_list("LIVE_ASHBY_BOARDS", DEFAULT_ASHBY_ORGS)
+    if ashby_limit is not None and ashby_limit > 0:
+        ashby_orgs = ashby_orgs[:ashby_limit]
+    for org in ashby_orgs:
+        diagnostics["sources_checked"] += 1
+        try:
+            scanned = scan_ashby(org)
+            jobs.extend(scanned)
+            diagnostics["sources_succeeded"] += 1
+            diagnostics["source_counts"].append(
+                {"source": "ashby", "token": org, "jobs": len(scanned)}
+            )
+        except Exception as exc:
+            if len(diagnostics["source_errors"]) < 8:
+                diagnostics["source_errors"].append(f"ashby:{org}:{exc}")
+            continue
+
     jobs = _dedupe_jobs(jobs)
     matched = [j for j in jobs if _text_matches_query(j, query)]
     diagnostics["scanned_jobs"] = len(jobs)
@@ -251,12 +280,14 @@ def _discover_live_jobs(
     limit: int = 600,
     greenhouse_limit: int | None = None,
     lever_limit: int | None = None,
+    ashby_limit: int | None = None,
 ) -> list[JobPosting]:
     jobs, _ = _discover_live_jobs_with_diagnostics(
         query,
         limit=limit,
         greenhouse_limit=greenhouse_limit,
         lever_limit=lever_limit,
+        ashby_limit=ashby_limit,
     )
     return jobs
 
@@ -307,6 +338,36 @@ def _job_matches_location_filters(job: JobPosting, app_profile: dict[str, Any]) 
     return any(term in location_text for term in location_terms)
 
 
+_NO_SPONSORSHIP_PHRASES = (
+    "not be able to sponsor",
+    "unable to sponsor",
+    "does not sponsor",
+    "do not sponsor",
+    "not sponsor",
+    "no sponsorship",
+    "without sponsorship",
+    "not provide sponsorship",
+    "not offer sponsorship",
+    "not offer visa",
+    "cannot provide visa",
+    "not provide visa",
+    "no visa sponsorship",
+    "sponsorship is not available",
+    "not eligible for sponsorship",
+    "authorized to work in the united states without",
+    "work authorization without sponsorship",
+)
+
+
+def _job_matches_work_authorization(job: JobPosting, app_profile: dict[str, Any]) -> bool:
+    """Drop roles that explicitly won't sponsor when the user needs sponsorship."""
+    needs_sponsorship = bool(app_profile.get("needs_sponsorship"))
+    if not needs_sponsorship:
+        return True
+    blob = f"{job.title} {job.description[:2500]}".lower()
+    return not any(phrase in blob for phrase in _NO_SPONSORSHIP_PHRASES)
+
+
 def _job_matches_sector(job: JobPosting, sector: str) -> bool:
     roles = get_roles_for_sector(sector)
     if not roles:
@@ -327,9 +388,54 @@ def _filter_jobs_by_profile_preferences(
         for job in jobs
         if _job_matches_location_filters(job, app_profile)
         and _job_matches_sector(job, selected_sector)
+        and _job_matches_work_authorization(job, app_profile)
         and company_matches_ranking(job.company, company_ranking_filter)
     ]
     return filtered if filtered else jobs
+
+
+def build_application_answers(profile: dict[str, Any] | None) -> list[dict[str, str]]:
+    """Derive common screening / work-authorization answers from the saved profile.
+
+    Used to pre-fill the standard questions ATS forms ask (work authorization,
+    sponsorship, relocation, salary) so the user does not re-answer them per app.
+    """
+    if not profile:
+        return []
+    app_profile = profile.get("application_profile") or {}
+    status = str(app_profile.get("work_authorization_status", "") or "").strip()
+    needs_sponsorship = bool(app_profile.get("needs_sponsorship"))
+    willing_to_relocate = bool(app_profile.get("willing_to_relocate"))
+    salary = str(app_profile.get("salary_expectation", "") or "").strip()
+    country = str(app_profile.get("country", "") or "").strip()
+
+    authorized = bool(status) and not needs_sponsorship
+    answers: list[dict[str, str]] = []
+    if country:
+        answers.append(
+            {
+                "question": f"Are you legally authorized to work in {country}?",
+                "answer": "Yes" if authorized or status else "No",
+            }
+        )
+    answers.append(
+        {
+            "question": "Will you now or in the future require sponsorship for employment "
+            "visa status (e.g., H-1B)?",
+            "answer": "Yes" if needs_sponsorship else "No",
+        }
+    )
+    if status:
+        answers.append({"question": "Current work authorization / visa status", "answer": status})
+    answers.append(
+        {
+            "question": "Are you willing to relocate?",
+            "answer": "Yes" if willing_to_relocate else "No",
+        }
+    )
+    if salary:
+        answers.append({"question": "Salary expectation", "answer": salary})
+    return answers
 
 
 def _profile_context_blob(profile: dict[str, Any] | None) -> str:
@@ -442,6 +548,44 @@ def _send_application_confirmation_email(to_email: str, role: str, job: JobPosti
             f"Location: {job.location}<br/>"
             f"URL: <a href='{job.url}'>{job.url}</a></p>"
             "<p>Please review your dashboard and resume details before any final submission.</p>"
+        ),
+    }
+    try:
+        resp = requests.post(
+            "https://api.resend.com/emails",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json=body,
+            timeout=20,
+        )
+        return 200 <= resp.status_code < 300
+    except Exception:
+        return False
+
+
+def _send_job_match_digest_email(
+    to_email: str, role: str, cards: list[dict[str, Any]]
+) -> bool:
+    api_key = os.getenv("RESEND_API_KEY", "").strip()
+    from_email = os.getenv("EMAIL_FROM", "").strip()
+    if not api_key or not from_email or not to_email or not cards:
+        return False
+    rows = "".join(
+        (
+            f"<li><strong>{c.get('title', '')}</strong> at {c.get('company', '')}"
+            f" — {c.get('location', '')}"
+            f" (match {c.get('ats_score', 0)}%)"
+            f" <a href='{c.get('url', '')}'>view</a></li>"
+        )
+        for c in cards[:10]
+    )
+    body = {
+        "from": from_email,
+        "to": [to_email],
+        "subject": f"AIapply.ai - {len(cards)} new matches for {role or 'your search'}",
+        "html": (
+            f"<p>New roles matching <strong>{role or 'your search'}</strong>:</p>"
+            f"<ul>{rows}</ul>"
+            "<p>Open your dashboard to tailor and apply.</p>"
         ),
     }
     try:
@@ -654,6 +798,7 @@ class ProfileUpsertRequest(BaseModel):
     auto_apply_enabled: bool = False
     auto_apply_consent: bool = False
     require_approval_before_apply: bool = True
+    job_alerts_enabled: bool = False
     work_preferences: list[str] = []
     company_ranking_filter: str = "any"
     companies_to_avoid: str = ""
@@ -665,6 +810,15 @@ class ProfileUpsertRequest(BaseModel):
     auto_apply_queue: list[dict[str, Any]] = []
     sub_profiles: list[dict[str, Any]] = []
     active_sub_profile_id: str = ""
+    tailored_documents: list[dict[str, Any]] = []
+
+
+class TailorRequest(BaseModel):
+    mode: str = "resume"
+    job_title: str = ""
+    company: str = ""
+    job_description: str = ""
+    base_text: str = ""
 
 
 class CheckoutRequest(BaseModel):
@@ -681,10 +835,33 @@ class AutoApplyRequest(BaseModel):
     selected_jobs: list[dict[str, Any]] = []
 
 
+class AutoApplySubmitRequest(BaseModel):
+    application_id: int
+    dry_run: bool = True
+
+
 class AssistantChatRequest(BaseModel):
     mode: str = "job_search_planning"
     message: str
     thread_id: int | None = None
+
+
+class ApplicationStatusRequest(BaseModel):
+    status: str
+
+
+# Statuses a user is allowed to move an application into from the dashboard.
+# Ordering here also defines the pipeline board columns (see frontend PIPELINE_STAGES).
+ALLOWED_APPLICATION_STATUSES = {
+    "approval_required",
+    "queued_auto_apply",
+    "viewed",
+    "applied",
+    "replied",
+    "interviewing",
+    "rejected",
+    "withdrawn",
+}
 
 
 def _count_today_applications(sb: Client, user_id: str) -> int:
@@ -869,7 +1046,9 @@ def _run_auto_apply_for_profile(
     require_approval = bool(app_profile.get("require_approval_before_apply", True))
     minimum_match_score = float(app_profile.get("minimum_match_score", 30.0) or 30.0)
 
-    jobs = _discover_live_jobs(role_query, limit=160, greenhouse_limit=10, lever_limit=10)
+    jobs = _discover_live_jobs(
+        role_query, limit=160, greenhouse_limit=10, lever_limit=10, ashby_limit=8
+    )
     matched = [j for j in jobs if _text_matches_query(j, role_query)]
     matched = _filter_jobs_by_profile_preferences(matched, app_profile)
     if avoid_companies:
@@ -1142,6 +1321,7 @@ def upsert_profile(
             "auto_apply_enabled": auto_apply_enabled,
             "auto_apply_consent": body.auto_apply_consent,
             "require_approval_before_apply": body.require_approval_before_apply,
+            "job_alerts_enabled": body.job_alerts_enabled,
             "work_preferences": body.work_preferences,
             "company_ranking_filter": body.company_ranking_filter,
             "companies_to_avoid": body.companies_to_avoid,
@@ -1153,6 +1333,7 @@ def upsert_profile(
             "auto_apply_queue": body.auto_apply_queue,
             "sub_profiles": sub_profiles,
             "active_sub_profile_id": body.active_sub_profile_id,
+            "tailored_documents": body.tailored_documents[:50],
         },
     }
     try:
@@ -1185,6 +1366,15 @@ def get_profile(authorization: str | None = Header(default=None)) -> dict[str, A
     return {"profile": profile, "subscription": _resolve_subscription_state(sb, user_id, profile)}
 
 
+@app.get("/api/profile/application-answers")
+def get_application_answers(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    user = _current_user(authorization)
+    user_id = _user_id_from_user(user)
+    sb = _supabase()
+    profile = _fetch_profile_row(sb, user_id)
+    return {"answers": build_application_answers(profile)}
+
+
 @app.get("/api/subscription/me")
 def get_subscription(authorization: str | None = Header(default=None)) -> dict[str, Any]:
     user = _current_user(authorization)
@@ -1215,6 +1405,34 @@ def get_applications(authorization: str | None = Header(default=None)) -> dict[s
         raise HTTPException(status_code=500, detail=f"Failed to fetch applications: {exc}")
     rows = getattr(resp, "data", []) or []
     return {"applications": rows, "count": int(getattr(resp, "count", 0) or 0)}
+
+
+@app.post("/api/applications/{application_id}/status")
+def update_application_status(
+    application_id: int,
+    body: ApplicationStatusRequest,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    user = _current_user(authorization)
+    user_id = _user_id_from_user(user)
+    new_status = body.status.strip().lower()
+    if new_status not in ALLOWED_APPLICATION_STATUSES:
+        raise HTTPException(status_code=400, detail="Unsupported application status.")
+    sb = _supabase()
+    try:
+        resp = (
+            sb.table("applications")
+            .update({"status": new_status})
+            .eq("id", application_id)
+            .eq("user_id", user_id)
+            .execute()
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to update application: {exc}")
+    rows = getattr(resp, "data", []) or []
+    if not rows:
+        raise HTTPException(status_code=404, detail="Application not found.")
+    return {"ok": True, "application": rows[0]}
 
 
 def _latest_assistant_thread(sb: Client, user_id: str) -> dict[str, Any] | None:
@@ -1411,6 +1629,144 @@ def assistant_chat(
     }
 
 
+def _match_jobs_for_profile(
+    profile: dict[str, Any] | None,
+    role_query: str,
+    top_k: int = 30,
+    discovery_limit: int = 400,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    app_profile = (profile or {}).get("application_profile") or {}
+    live_jobs, diagnostics = _discover_live_jobs_with_diagnostics(role_query, limit=discovery_limit)
+    jobs = _filter_jobs_by_profile_preferences(live_jobs, app_profile)
+    profile_context = _profile_context_blob(profile)
+    _, _, matches = recommend_jobs_rag(
+        jobs=jobs,
+        resume_text=profile_context or role_query,
+        selected_role="custom",
+        custom_role=role_query,
+        top_k=max(1, min(top_k, 80)),
+        sector=str(app_profile.get("target_sector", "")).strip(),
+    )
+    cards = _results_to_cards(matches, min_score=0.0)
+    return cards, diagnostics
+
+
+@app.get("/api/jobs/matches")
+def get_job_matches(
+    q: str = "",
+    limit: int = 30,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Live monitoring feed: current matching roles for the saved profile.
+
+    Unlike /api/rag/match this needs no resume upload — it blends the saved
+    profile context and re-runs discovery so the dashboard can poll for new
+    matches across Greenhouse, Lever, and Ashby.
+    """
+    user = _current_user(authorization)
+    user_id = _user_id_from_user(user)
+    sb = _supabase()
+    profile = _fetch_profile_row(sb, user_id)
+    role_query = q.strip() or str((profile or {}).get("target_role", "") or "").strip()
+    if not role_query:
+        raise HTTPException(
+            status_code=400,
+            detail="Set a target role in your profile (or pass q) before monitoring matches.",
+        )
+    cards, diagnostics = _match_jobs_for_profile(profile, role_query, top_k=limit)
+    return {
+        "role": role_query,
+        "count": len(cards),
+        "results": cards,
+        "source_diagnostics": diagnostics,
+    }
+
+
+@app.post("/api/tailor")
+def tailor_documents(
+    body: TailorRequest,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    user = _current_user(authorization)
+    user_id = _user_id_from_user(user)
+    sb = _supabase()
+    profile = _fetch_profile_row(sb, user_id)
+    subscription = _resolve_subscription_state(sb, user_id, profile)
+    _require_feature(
+        subscription,
+        "can_use_assistant",
+        "Resume tailoring requires the Personal Assistant, which your plan does not include.",
+    )
+    limit = subscription.get("assistant_prompts_limit")
+    remaining = subscription.get("assistant_prompts_remaining")
+    if limit is not None and isinstance(remaining, int) and remaining <= 0:
+        raise HTTPException(
+            status_code=403,
+            detail="You have used all assistant credits this month. Upgrade to Pro for unlimited tailoring.",
+        )
+
+    mode = body.mode.strip().lower()
+    if mode not in TAILOR_MODES:
+        raise HTTPException(status_code=400, detail="Unsupported tailoring mode.")
+    if not body.base_text.strip() and not profile:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide source resume text or save a profile before tailoring.",
+        )
+
+    try:
+        result = run_tailoring(
+            mode=mode,
+            base_text=body.base_text,
+            job_title=body.job_title,
+            company=body.company,
+            job_description=body.job_description,
+            profile=profile,
+            user_id=user_id,
+        )
+    except requests.HTTPError as exc:
+        detail = getattr(exc.response, "text", str(exc))
+        raise HTTPException(status_code=502, detail=f"Tailoring provider request failed: {detail}")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    # Best-effort usage accounting so tailoring counts toward Basic limits.
+    try:
+        thread_resp = (
+            sb.table("assistant_threads")
+            .insert(
+                {
+                    "user_id": user_id,
+                    "mode": "resume_improvement" if mode == "resume" else "cover_letter_generation",
+                    "title": f"Tailored {mode.replace('_', ' ')}: {body.company or body.job_title or 'role'}"[:60],
+                }
+            )
+            .execute()
+        )
+        thread_rows = getattr(thread_resp, "data", []) or []
+        if thread_rows:
+            sb.table("assistant_messages").insert(
+                {
+                    "thread_id": thread_rows[0]["id"],
+                    "user_id": user_id,
+                    "role": "user",
+                    "content": f"[tailor:{mode}] {body.job_title} @ {body.company}",
+                    "metadata": {"kind": "tailor", "mode": mode},
+                }
+            ).execute()
+    except Exception:
+        pass
+
+    refreshed = _resolve_subscription_state(sb, user_id, profile)
+    return {
+        "mode": result.get("mode", mode),
+        "tailored_text": result.get("tailored_text", ""),
+        "changes": result.get("changes", []),
+        "keywords": result.get("keywords", []),
+        "subscription": refreshed,
+    }
+
+
 @app.post("/api/rag/match")
 async def rag_match(
     resume_file: UploadFile = File(...),
@@ -1578,6 +1934,98 @@ def auto_apply_run(
     )
 
 
+@app.post("/api/auto-apply/submit")
+def auto_apply_submit(
+    body: AutoApplySubmitRequest, authorization: str | None = Header(default=None)
+) -> dict[str, Any]:
+    """Drive a headless browser to actually fill (and optionally submit) a queued
+    application. Experimental: requires Playwright browsers on the host and a
+    server-stored resume for document upload. Defaults to dry_run (fill only).
+    """
+    user = _current_user(authorization)
+    user_id = _user_id_from_user(user)
+    sb = _supabase()
+    profile = _fetch_profile_row(sb, user_id)
+    if not profile:
+        raise HTTPException(status_code=400, detail="Profile not found. Save profile first.")
+    subscription = _resolve_subscription_state(sb, user_id, profile)
+    _require_feature(
+        subscription,
+        "can_auto_apply",
+        "Auto Apply submission is available on the Pro plan.",
+    )
+    app_profile = profile.get("application_profile") or {}
+    if not bool(app_profile.get("auto_apply_enabled")) or not bool(app_profile.get("auto_apply_consent")):
+        raise HTTPException(
+            status_code=400,
+            detail="Enable Auto Apply and consent before submitting applications.",
+        )
+
+    try:
+        resp = (
+            sb.table("applications")
+            .select("*")
+            .eq("id", body.application_id)
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to load application: {exc}")
+    rows = getattr(resp, "data", []) or []
+    if not rows:
+        raise HTTPException(status_code=404, detail="Application not found.")
+    application = rows[0]
+    job_url = str(application.get("job_url", "") or "")
+    if not job_url:
+        raise HTTPException(status_code=400, detail="Application has no job URL to submit to.")
+
+    applicant = {
+        "name": str(profile.get("full_name", "") or ""),
+        "email": str(profile.get("email", "") or user.get("email", "")),
+        "phone": str(app_profile.get("phone", "") or ""),
+        "location": str(app_profile.get("location", "") or ""),
+        "linkedin": str(app_profile.get("linkedin_url", "") or ""),
+        "portfolio": str(app_profile.get("portfolio_url", "") or ""),
+    }
+    resume_path = os.getenv("AUTO_APPLY_RESUME_PATH", "").strip() or None
+    require_approval = bool(app_profile.get("require_approval_before_apply", True))
+    # Never auto-submit when the user still wants to approve each application.
+    do_submit = bool(not body.dry_run and not require_approval)
+
+    try:
+        from .apply_bot import prepare_application
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Submission engine unavailable (Playwright not installed): {exc}",
+        )
+
+    result = prepare_application(
+        job_url=job_url,
+        applicant=applicant,
+        resume_path=resume_path,
+        answers=build_application_answers(profile),
+        submit=do_submit,
+        headless=True,
+    )
+
+    if result.get("submitted"):
+        try:
+            sb.table("applications").update({"status": "applied"}).eq(
+                "id", body.application_id
+            ).eq("user_id", user_id).execute()
+        except Exception:
+            pass
+
+    return {
+        "application_id": body.application_id,
+        "dry_run": not do_submit,
+        "resume_uploaded": bool(resume_path),
+        "result": result,
+    }
+
+
 @app.post("/api/auto-apply/tick")
 def auto_apply_tick(x_auto_apply_secret: str | None = Header(default=None)) -> dict[str, Any]:
     expected_secret = os.getenv("AUTO_APPLY_CRON_SECRET", "").strip()
@@ -1594,17 +2042,30 @@ def auto_apply_tick(x_auto_apply_secret: str | None = Header(default=None)) -> d
     processed = 0
     queued = 0
     emails_sent = 0
+    alerts_sent = 0
 
     for profile in profiles:
         app_profile = profile.get("application_profile") or {}
-        if not bool(app_profile.get("auto_apply_enabled")) or not bool(app_profile.get("auto_apply_consent")):
-            continue
         user_id = str(profile.get("id", "")).strip()
         user_email = str(profile.get("email", "")).strip()
         role_query = str(profile.get("target_role", "")).strip()
         if not user_id or not role_query:
             continue
 
+        # Job-match alerts (available regardless of auto-apply) — email a digest
+        # of fresh matches to users who opted in.
+        if bool(app_profile.get("job_alerts_enabled")) and user_email:
+            try:
+                cards, _ = _match_jobs_for_profile(profile, role_query, top_k=10)
+                fresh = [c for c in cards if c.get("posted_bucket") in {"past_24_hours", "past_week"}]
+                if _send_job_match_digest_email(user_email, role_query, fresh or cards):
+                    alerts_sent += 1
+            except Exception:
+                pass
+
+        # Continuous auto-apply (Pro + explicit consent only).
+        if not bool(app_profile.get("auto_apply_enabled")) or not bool(app_profile.get("auto_apply_consent")):
+            continue
         try:
             subscription = _resolve_subscription_state(sb, user_id, profile)
             if not bool(subscription.get("features", {}).get("can_run_continuous_auto_apply")):
@@ -1627,6 +2088,7 @@ def auto_apply_tick(x_auto_apply_secret: str | None = Header(default=None)) -> d
         "processed_profiles": processed,
         "queued_applications": queued,
         "email_confirmations_sent": emails_sent,
+        "alert_digests_sent": alerts_sent,
     }
 
 
@@ -1685,9 +2147,93 @@ async def stripe_webhook(request: Request) -> dict[str, Any]:
                             "stripe_subscription_id": subscription_id,
                             "stripe_price_id": ((checkout.get("metadata") or {}).get("price_id", "")),
                             "status": "active",
-                        }
+                        },
+                        on_conflict="stripe_subscription_id",
                     ).execute()
                 except Exception:
                     pass
 
+    elif event["type"] in {"customer.subscription.updated", "customer.subscription.deleted"}:
+        # Keep entitlements in sync when a subscription is renewed, paused, or
+        # cancelled. Without this, cancelled users would keep Pro access forever.
+        subscription = event["data"]["object"]
+        _apply_subscription_event(sb=_supabase(), subscription=subscription)
+
     return {"received": True}
+
+
+def _apply_subscription_event(sb: Client, subscription: dict[str, Any]) -> None:
+    stripe_subscription_id = str(subscription.get("id", "") or "")
+    stripe_customer_id = str(subscription.get("customer", "") or "")
+    status = str(subscription.get("status", "") or "").strip().lower()
+    if not stripe_subscription_id:
+        return
+
+    # Resolve the owning user from the subscription or, failing that, the customer.
+    user_id = ""
+    try:
+        resp = (
+            sb.table("subscriptions")
+            .select("user_id")
+            .eq("stripe_subscription_id", stripe_subscription_id)
+            .limit(1)
+            .execute()
+        )
+        rows = getattr(resp, "data", []) or []
+        if rows:
+            user_id = str(rows[0].get("user_id", "") or "")
+    except Exception:
+        user_id = ""
+    if not user_id and stripe_customer_id:
+        try:
+            resp = (
+                sb.table("subscriptions")
+                .select("user_id")
+                .eq("stripe_customer_id", stripe_customer_id)
+                .order("created_at", desc=True)
+                .limit(1)
+                .execute()
+            )
+            rows = getattr(resp, "data", []) or []
+            if rows:
+                user_id = str(rows[0].get("user_id", "") or "")
+        except Exception:
+            user_id = ""
+
+    price_id = ""
+    try:
+        items = ((subscription.get("items") or {}).get("data") or [])
+        if items:
+            price_id = str(((items[0].get("price") or {}).get("id", "")) or "")
+    except Exception:
+        price_id = ""
+
+    payload: dict[str, Any] = {
+        "stripe_subscription_id": stripe_subscription_id,
+        "stripe_customer_id": stripe_customer_id,
+        "status": status or "canceled",
+        "cancel_at_period_end": bool(subscription.get("cancel_at_period_end")),
+    }
+    if user_id:
+        payload["user_id"] = user_id
+    if price_id:
+        payload["stripe_price_id"] = price_id
+    try:
+        sb.table("subscriptions").upsert(
+            payload, on_conflict="stripe_subscription_id"
+        ).execute()
+    except Exception:
+        pass
+
+    # Downgrade the profile when the subscription is no longer active.
+    if user_id:
+        active = status in ACTIVE_SUBSCRIPTION_STATUSES
+        try:
+            sb.table("profiles").update(
+                {
+                    "plan": "pro" if active else "basic",
+                    "plan_status": status if active else "canceled",
+                }
+            ).eq("id", user_id).execute()
+        except Exception:
+            pass

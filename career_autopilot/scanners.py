@@ -117,6 +117,36 @@ def scan_lever(site: str) -> list[JobPosting]:
     return [j for j in out if j.url]
 
 
+def scan_ashby(org: str) -> list[JobPosting]:
+    url = f"https://api.ashbyhq.com/posting-api/job-board/{org}?includeCompensation=true"
+    data = _get_json(url)
+    rows = data.get("jobs", []) if isinstance(data, dict) else []
+    out: list[JobPosting] = []
+    for j in rows:
+        if not isinstance(j, dict):
+            continue
+        location = str(j.get("location", "") or "")
+        if not location:
+            address = j.get("address") or {}
+            postal = address.get("postalAddress") if isinstance(address, dict) else {}
+            if isinstance(postal, dict):
+                location = str(postal.get("addressLocality", "") or "")
+        if j.get("isRemote") and "remote" not in location.lower():
+            location = f"{location} (Remote)".strip()
+        out.append(
+            _normalize_job(
+                source="ashby",
+                url=str(j.get("jobUrl", "") or j.get("applyUrl", "")),
+                title=str(j.get("title", "")),
+                company=org,
+                location=location,
+                description=str(j.get("descriptionPlain", "") or ""),
+                posted_at=j.get("publishedAt") or j.get("updatedAt") or "",
+            )
+        )
+    return [j for j in out if j.url]
+
+
 def scan_manual_urls(path: Path) -> list[JobPosting]:
     if not path.exists():
         return []
@@ -183,6 +213,12 @@ def scan_all_sources(raw_cfg: dict, project_root: Path) -> list[JobPosting]:
             jobs.extend(scan_lever(str(site)))
         except Exception as exc:
             print(f"[warn] lever {site}: {exc}")
+
+    for org in raw_cfg.get("ashby", {}).get("orgs", []):
+        try:
+            jobs.extend(scan_ashby(str(org)))
+        except Exception as exc:
+            print(f"[warn] ashby {org}: {exc}")
 
     manual_cfg = raw_cfg.get("manual", {})
     manual_file = manual_cfg.get("job_urls_file")

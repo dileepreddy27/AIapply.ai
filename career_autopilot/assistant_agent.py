@@ -158,11 +158,13 @@ def _extract_anthropic_text(data: dict[str, Any]) -> str:
 
 def _anthropic_candidate_models() -> list[str]:
     configured = _clean_env_value(os.getenv("ANTHROPIC_MODEL", ""))
+    # Keep this list on currently-available models. The previous defaults
+    # (claude-sonnet-4-*, claude-3-7-sonnet-*) are now deprecated/retired and
+    # return 404, which broke the assistant whenever ANTHROPIC_MODEL was unset.
     defaults = [
-        "claude-sonnet-4-20250514",
-        "claude-sonnet-4-0",
-        "claude-3-7-sonnet-20250219",
-        "claude-3-7-sonnet-latest",
+        "claude-sonnet-4-5",
+        "claude-haiku-4-5",
+        "claude-opus-4-5",
     ]
     candidates: list[str] = []
     for model in [configured, *defaults]:

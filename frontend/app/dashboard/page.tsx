@@ -115,6 +115,25 @@ type ApplicationRecord = {
   notes?: string;
 };
 
+type TailoredDocument = {
+  id: string;
+  mode: "resume" | "cover_letter";
+  company: string;
+  job_title: string;
+  tailored_text: string;
+  changes: string[];
+  keywords: string[];
+  created_at: string;
+};
+
+const PIPELINE_STAGES: { key: string; label: string; statuses: string[] }[] = [
+  { key: "queued", label: "Queued", statuses: ["approval_required", "queued_auto_apply"] },
+  { key: "viewed", label: "Viewed", statuses: ["viewed"] },
+  { key: "applied", label: "Applied", statuses: ["applied"] },
+  { key: "replied", label: "Replied", statuses: ["replied"] },
+  { key: "interviewing", label: "Interview", statuses: ["interviewing"] }
+];
+
 type SubscriptionFeatures = {
   can_job_match: boolean;
   can_auto_apply: boolean;
@@ -235,6 +254,7 @@ export default function DashboardPage() {
   const [autoApplyEnabled, setAutoApplyEnabled] = useState(false);
   const [autoApplyConsent, setAutoApplyConsent] = useState(false);
   const [requireApprovalBeforeApply, setRequireApprovalBeforeApply] = useState(false);
+  const [jobAlertsEnabled, setJobAlertsEnabled] = useState(false);
   const [workPreferences, setWorkPreferences] = useState("");
   const [companyRankingFilter, setCompanyRankingFilter] = useState("any");
   const [companiesToAvoid, setCompaniesToAvoid] = useState("");
@@ -286,6 +306,12 @@ export default function DashboardPage() {
   const [assistantError, setAssistantError] = useState("");
   const [showApplications, setShowApplications] = useState(false);
   const [activeStep, setActiveStep] = useState<DashboardStep>("profile");
+
+  const [tailoredDocuments, setTailoredDocuments] = useState<TailoredDocument[]>([]);
+  const [tailorJobUrl, setTailorJobUrl] = useState("");
+  const [tailorMode, setTailorMode] = useState<"resume" | "cover_letter">("resume");
+  const [tailorLoading, setTailorLoading] = useState(false);
+  const [tailorResult, setTailorResult] = useState<{ tailored_text: string; changes: string[]; keywords: string[] } | null>(null);
 
   const selectedCountry = useMemo(
     () => profileOptions.countries.find((entry) => entry.label === country),
@@ -376,6 +402,31 @@ export default function DashboardPage() {
       : `${subscription.assistant_prompts_remaining ?? 0} prompts left`;
 
   const canRunMatch = useMemo(() => !!token && !!resumeFile, [token, resumeFile]);
+
+  const applicationAnswers = useMemo(() => {
+    const answers: { question: string; answer: string }[] = [];
+    if (country) {
+      answers.push({
+        question: `Legally authorized to work in ${country}?`,
+        answer: workAuthorizationStatus && !needsSponsorship ? "Yes" : workAuthorizationStatus ? "Yes" : "No"
+      });
+    }
+    answers.push({ question: "Require visa sponsorship (now or future)?", answer: needsSponsorship ? "Yes" : "No" });
+    if (workAuthorizationStatus) answers.push({ question: "Work authorization status", answer: workAuthorizationStatus });
+    answers.push({ question: "Willing to relocate?", answer: willingToRelocate ? "Yes" : "No" });
+    if (salaryExpectation) answers.push({ question: "Salary expectation", answer: salaryExpectation });
+    return answers;
+  }, [country, workAuthorizationStatus, needsSponsorship, willingToRelocate, salaryExpectation]);
+
+  const applicationsByStage = useMemo(() => {
+    const map: Record<string, ApplicationRecord[]> = {};
+    for (const stage of PIPELINE_STAGES) map[stage.key] = [];
+    for (const app of applications) {
+      const stage = PIPELINE_STAGES.find((s) => s.statuses.includes(app.status));
+      if (stage) map[stage.key].push(app);
+    }
+    return map;
+  }, [applications]);
 
   useEffect(() => {
     let mounted = true;
@@ -473,8 +524,8 @@ export default function DashboardPage() {
     if (normalized.includes("insufficient balance") || normalized.includes("balance is empty")) {
       return "The Anthropic assistant account does not have available billing or credit right now. Check Anthropic billing, redeploy if needed, and try again.";
     }
-    if (normalized.includes("model:") || normalized.includes("claude-sonnet-4-20250514")) {
-      return "Your ANTHROPIC_MODEL value in Render is likely malformed. Set it exactly to claude-sonnet-4-20250514 with no quotes, save, redeploy Render, and try again.";
+    if (normalized.includes("model:") || normalized.includes("not found") || normalized.includes("claude-")) {
+      return "Your ANTHROPIC_MODEL value in Render is likely malformed or points to a retired model. Set it to a current model such as claude-sonnet-4-5 with no quotes, save, redeploy Render, and try again.";
     }
     if (normalized.includes("quota") || normalized.includes("rate limit")) {
       return "The Anthropic assistant hit a quota, billing limit, or rate-limit issue. Check Anthropic billing and usage for the key configured in Render, then try again.";
@@ -649,6 +700,8 @@ export default function DashboardPage() {
       setAutoApplyEnabled(storedAutoApplyEnabled);
       setAutoApplyConsent(storedAutoApplyEnabled ? Boolean(app.auto_apply_consent) : false);
       setRequireApprovalBeforeApply(storedAutoApplyEnabled ? Boolean(app.require_approval_before_apply) : false);
+      setJobAlertsEnabled(Boolean(app.job_alerts_enabled));
+      setTailoredDocuments(Array.isArray(app.tailored_documents) ? app.tailored_documents : []);
       setWorkPreferences((app.work_preferences || []).join(", "));
       setCompanyRankingFilter(app.company_ranking_filter ?? "any");
       setCompaniesToAvoid(app.companies_to_avoid ?? "");
@@ -691,6 +744,122 @@ export default function DashboardPage() {
       setApplicationsCount(Number(data?.count ?? 0));
     } catch (err) {
       console.error(err);
+    }
+  }
+
+  async function updateApplicationStatus(applicationId: number, status: string): Promise<void> {
+    if (!isBackendConfigured()) {
+      setMessage(backendConfigMessage());
+      return;
+    }
+    try {
+      const res = await authFetch(`${backendUrl}/api/applications/${applicationId}/status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.detail ?? "Could not update application.");
+      await loadApplications();
+      setMessage(`Application marked as ${status.replace(/_/g, " ")}.`);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : "Application update failed.";
+      setMessage(detail);
+    }
+  }
+
+  async function submitApplication(applicationId: number): Promise<void> {
+    if (!isBackendConfigured()) {
+      setMessage(backendConfigMessage());
+      return;
+    }
+    setMessage("Running the submission engine (headless browser)…");
+    try {
+      const res = await authFetch(`${backendUrl}/api/auto-apply/submit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ application_id: applicationId, dry_run: false })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.detail ?? "Submission failed.");
+      const result = data.result ?? {};
+      await loadApplications();
+      const suffix = data.dry_run ? " (dry run — approval still required)" : "";
+      const err = result.error ? ` — ${result.error}` : "";
+      setMessage(`Submission engine: ${result.status ?? "done"}${suffix}${err}`);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : "Submission failed.";
+      setMessage(detail);
+    }
+  }
+
+  async function tailorForJob(job: MatchResult, mode: "resume" | "cover_letter"): Promise<void> {
+    if (!isBackendConfigured()) {
+      setMessage(backendConfigMessage());
+      return;
+    }
+    setTailorJobUrl(job.url);
+    setTailorMode(mode);
+    setTailorResult(null);
+    setTailorLoading(true);
+    try {
+      const res = await authFetch(`${backendUrl}/api/tailor`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode,
+          job_title: job.title,
+          company: job.company,
+          job_description: "",
+          base_text: applicationSummary
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.detail ?? "Tailoring failed.");
+      if (data?.subscription) setSubscription(data.subscription);
+      setTailorResult({
+        tailored_text: data.tailored_text ?? "",
+        changes: Array.isArray(data.changes) ? data.changes : [],
+        keywords: Array.isArray(data.keywords) ? data.keywords : []
+      });
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : "Tailoring failed.";
+      setMessage(humanizeAssistantError(detail));
+      setTailorJobUrl("");
+    } finally {
+      setTailorLoading(false);
+    }
+  }
+
+  async function saveTailoredDocument(job: MatchResult): Promise<void> {
+    if (!tailorResult) return;
+    const doc: TailoredDocument = {
+      id: `${tailorMode}::${job.company.toLowerCase()}::${job.title.toLowerCase()}`,
+      mode: tailorMode,
+      company: job.company,
+      job_title: job.title,
+      tailored_text: tailorResult.tailored_text,
+      changes: tailorResult.changes,
+      keywords: tailorResult.keywords,
+      created_at: new Date().toISOString()
+    };
+    const next = [doc, ...tailoredDocuments.filter((d) => d.id !== doc.id)].slice(0, 50);
+    setTailoredDocuments(next);
+    setTailorJobUrl("");
+    setTailorResult(null);
+    await persistProfile(buildProfilePayload({ tailored_documents: next }), {
+      advanceStep: null,
+      silent: false,
+      successMessage: "Tailored document saved."
+    });
+  }
+
+  async function copyText(text: string): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(text);
+      setMessage("Copied to clipboard.");
+    } catch {
+      setMessage("Could not copy from this browser.");
     }
   }
 
@@ -749,6 +918,8 @@ export default function DashboardPage() {
       auto_apply_enabled: autoApplyEnabled,
       auto_apply_consent: autoApplyEnabled ? autoApplyConsent : false,
       require_approval_before_apply: autoApplyEnabled ? requireApprovalBeforeApply : false,
+      job_alerts_enabled: jobAlertsEnabled,
+      tailored_documents: tailoredDocuments,
       company_ranking_filter: companyRankingFilter,
       companies_to_avoid: companiesToAvoid,
       max_applications_per_day: Number(maxApplicationsPerDay || "10"),
@@ -1691,7 +1862,30 @@ export default function DashboardPage() {
                   onChange={(e) => setRequireApprovalBeforeApply(e.target.checked)}
                 />
               </label>
+              <label className="toggle-card">
+                <span>Email Me New Matches (Job Alerts)</span>
+                <input
+                  type="checkbox"
+                  checked={jobAlertsEnabled}
+                  onChange={(e) => setJobAlertsEnabled(e.target.checked)}
+                />
+              </label>
             </div>
+            {applicationAnswers.length > 0 && (
+              <div className="source-diagnostics">
+                <p className="feature-kicker">Auto-Answers (work authorization &amp; screening)</p>
+                <ul className="plain-list">
+                  {applicationAnswers.map((a, i) => (
+                    <li key={i}>
+                      <strong>{a.question}</strong> {a.answer}
+                    </li>
+                  ))}
+                </ul>
+                <p className="field-hint">
+                  These pre-fill common ATS screening questions during Auto Apply.
+                </p>
+              </div>
+            )}
           </article>
 
           <article
@@ -1788,7 +1982,51 @@ export default function DashboardPage() {
                       <button type="button" className="ghost" onClick={() => void addJobToAutoApplyQueue(job)}>
                         Move To Auto Apply
                       </button>
+                      <button type="button" className="ghost" onClick={() => void tailorForJob(job, "resume")}>
+                        Tailor Resume
+                      </button>
+                      <button type="button" className="ghost" onClick={() => void tailorForJob(job, "cover_letter")}>
+                        Cover Letter
+                      </button>
                     </div>
+                    {tailorJobUrl === job.url && (
+                      <div className="permission-panel">
+                        {tailorLoading ? (
+                          <p className="field-hint">Tailoring your {tailorMode === "resume" ? "resume" : "cover letter"} for {job.company}…</p>
+                        ) : tailorResult ? (
+                          <>
+                            <p className="feature-kicker">
+                              Tailored {tailorMode === "resume" ? "Resume" : "Cover Letter"} · {job.title} @ {job.company}
+                            </p>
+                            {tailorResult.keywords.length > 0 && (
+                              <p className="field-hint">Aligned keywords: {tailorResult.keywords.join(", ")}</p>
+                            )}
+                            {tailorResult.changes.length > 0 && (
+                              <ul className="plain-list">
+                                {tailorResult.changes.slice(0, 12).map((c, i) => (
+                                  <li key={i}>{c}</li>
+                                ))}
+                              </ul>
+                            )}
+                            <textarea rows={10} readOnly value={tailorResult.tailored_text} />
+                            <div className="feature-actions">
+                              <button type="button" onClick={() => void saveTailoredDocument(job)}>Save Version</button>
+                              <button type="button" className="ghost" onClick={() => void copyText(tailorResult.tailored_text)}>Copy</button>
+                              <button
+                                type="button"
+                                className="ghost"
+                                onClick={() => {
+                                  setTailorJobUrl("");
+                                  setTailorResult(null);
+                                }}
+                              >
+                                Close
+                              </button>
+                            </div>
+                          </>
+                        ) : null}
+                      </div>
+                    )}
                     {permissionCaptureJobId === job.url && (
                       <div className="permission-panel">
                         <label className="dashboard-field-wide">
@@ -1930,6 +2168,57 @@ export default function DashboardPage() {
                     </div>
                     <p>{application.company || "Unknown company"} · {application.location || "Unknown location"}</p>
                     <p>{new Date(application.created_at).toLocaleString()}</p>
+                    <div className="feature-actions">
+                      {application.status === "approval_required" && (
+                        <button
+                          type="button"
+                          className="ghost"
+                          onClick={() => void updateApplicationStatus(application.id, "queued_auto_apply")}
+                        >
+                          Approve
+                        </button>
+                      )}
+                      {autoApplyEnabled && (application.status === "queued_auto_apply" || application.status === "approval_required") && (
+                        <button
+                          type="button"
+                          className="ghost"
+                          onClick={() => void submitApplication(application.id)}
+                        >
+                          Auto-Submit
+                        </button>
+                      )}
+                      {application.status !== "applied" && application.status !== "withdrawn" && (
+                        <button
+                          type="button"
+                          className="ghost"
+                          onClick={() => void updateApplicationStatus(application.id, "applied")}
+                        >
+                          Mark Applied
+                        </button>
+                      )}
+                      {application.job_url && (
+                        <button
+                          type="button"
+                          className="ghost"
+                          onClick={() => {
+                            if (typeof window !== "undefined") {
+                              window.open(normalizeBookmarkWebsite(application.job_url), "_blank", "noopener,noreferrer");
+                            }
+                          }}
+                        >
+                          Open
+                        </button>
+                      )}
+                      {application.status !== "withdrawn" && (
+                        <button
+                          type="button"
+                          className="ghost"
+                          onClick={() => void updateApplicationStatus(application.id, "withdrawn")}
+                        >
+                          Withdraw
+                        </button>
+                      )}
+                    </div>
                   </article>
                 ))
               )}
@@ -1942,6 +2231,119 @@ export default function DashboardPage() {
               ))}
             </ul>
           </article>
+
+          <article
+            className="dashboard-card dashboard-card-wide"
+            style={activeStep === "analytics" ? undefined : { display: "none" }}
+          >
+            <div className="card-header-row">
+              <div>
+                <p className="feature-kicker">Pipeline</p>
+                <h3>Application Board</h3>
+              </div>
+              <button onClick={() => void loadApplications()} className="ghost" type="button">
+                Refresh
+              </button>
+            </div>
+            <div className="pipeline-board">
+              {PIPELINE_STAGES.map((stage) => (
+                <div key={stage.key} className="pipeline-column">
+                  <div className="pipeline-column-head">
+                    <span>{stage.label}</span>
+                    <span className="topbar-chip">{applicationsByStage[stage.key]?.length ?? 0}</span>
+                  </div>
+                  {(applicationsByStage[stage.key] ?? []).length === 0 ? (
+                    <p className="empty-state">—</p>
+                  ) : (
+                    (applicationsByStage[stage.key] ?? []).map((application) => (
+                      <article key={application.id} className="pipeline-card">
+                        <h4>{application.title || "Untitled role"}</h4>
+                        <p>{application.company || "Unknown company"}</p>
+                        <div className="feature-actions">
+                          {stage.key === "queued" && (
+                            <button
+                              type="button"
+                              className="ghost"
+                              onClick={() => void updateApplicationStatus(application.id, "applied")}
+                            >
+                              Applied
+                            </button>
+                          )}
+                          {stage.key === "applied" && (
+                            <button
+                              type="button"
+                              className="ghost"
+                              onClick={() => void updateApplicationStatus(application.id, "replied")}
+                            >
+                              Replied
+                            </button>
+                          )}
+                          {stage.key === "replied" && (
+                            <button
+                              type="button"
+                              className="ghost"
+                              onClick={() => void updateApplicationStatus(application.id, "interviewing")}
+                            >
+                              Interview
+                            </button>
+                          )}
+                          {application.job_url && (
+                            <button
+                              type="button"
+                              className="ghost"
+                              onClick={() => {
+                                if (typeof window !== "undefined") {
+                                  window.open(normalizeBookmarkWebsite(application.job_url), "_blank", "noopener,noreferrer");
+                                }
+                              }}
+                            >
+                              Open
+                            </button>
+                          )}
+                        </div>
+                      </article>
+                    ))
+                  )}
+                </div>
+              ))}
+            </div>
+          </article>
+
+          {tailoredDocuments.length > 0 && (
+            <article
+              className="dashboard-card dashboard-card-wide"
+              style={activeStep === "analytics" ? undefined : { display: "none" }}
+            >
+              <div className="card-header-row">
+                <div>
+                  <p className="feature-kicker">Saved Documents</p>
+                  <h3>Tailored Resumes &amp; Cover Letters</h3>
+                </div>
+                <span className="status-inline">{tailoredDocuments.length} saved</span>
+              </div>
+              <div className="queue-preview-list">
+                {tailoredDocuments.slice(0, 12).map((doc) => (
+                  <article key={doc.id} className="queue-preview-card">
+                    <div className="application-topline">
+                      <h4>{doc.job_title} @ {doc.company}</h4>
+                      <span className="status-pill queued_auto_apply">{doc.mode === "resume" ? "resume" : "cover letter"}</span>
+                    </div>
+                    {doc.keywords?.length > 0 && <p className="field-hint">Keywords: {doc.keywords.join(", ")}</p>}
+                    <div className="feature-actions">
+                      <button type="button" className="ghost" onClick={() => void copyText(doc.tailored_text)}>Copy</button>
+                      <button
+                        type="button"
+                        className="ghost"
+                        onClick={() => setTailoredDocuments((cur) => cur.filter((d) => d.id !== doc.id))}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </article>
+          )}
 
           <article
             className="dashboard-card"

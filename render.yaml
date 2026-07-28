@@ -3,7 +3,9 @@ services:
     name: aiapply-backend
     env: python
     plan: starter
-    buildCommand: pip install -r requirements.txt
+    # Playwright chromium is only needed for the experimental /api/auto-apply/submit
+    # engine. Drop the second command if you are not using browser submission.
+    buildCommand: pip install -r requirements.txt && python -m playwright install --with-deps chromium
     startCommand: uvicorn career_autopilot.api:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /healthz
     envVars:

@@ -184,6 +184,14 @@ for insert
 to authenticated
 with check (auth.uid() = user_id);
 
+drop policy if exists "Users can update own applications" on public.applications;
+create policy "Users can update own applications"
+on public.applications
+for update
+to authenticated
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
+
 drop policy if exists "Users can read own assistant threads" on public.assistant_threads;
 create policy "Users can read own assistant threads"
 on public.assistant_threads

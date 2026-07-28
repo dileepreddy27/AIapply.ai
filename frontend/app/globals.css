@@ -955,4 +955,59 @@ button:disabled {
     bottom: 90px;
     width: auto;
   }
+  .pipeline-board {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.pipeline-board {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+  overflow-x: auto;
+}
+
+.pipeline-column {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 10px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pipeline-column-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  opacity: 0.85;
+}
+
+.pipeline-card {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.pipeline-card h4 {
+  margin: 0 0 2px;
+  font-size: 0.9rem;
+}
+
+.pipeline-card p {
+  margin: 0 0 8px;
+  font-size: 0.8rem;
+  opacity: 0.75;
+}
+
+.pipeline-card .feature-actions {
+  flex-wrap: wrap;
+  gap: 6px;
 }
