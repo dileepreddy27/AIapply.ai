@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -26,6 +27,8 @@ class PlanDefinition:
     assistant_monthly_prompts: int | None
     assistant_modes: list[str]
     max_auto_apply_per_day: int
+    monthly_application_limit: int | None
+    price_usd: int
     highlights: list[str]
 
 
@@ -40,11 +43,32 @@ PLAN_DEFINITIONS: dict[str, PlanDefinition] = {
         assistant_monthly_prompts=20,
         assistant_modes=ASSISTANT_MODES,
         max_auto_apply_per_day=0,
+        monthly_application_limit=0,
+        price_usd=0,
         highlights=[
             "Resume-based job matching",
             "Target role, location, and company filters",
             "AI assistant with limited monthly prompts",
             "Application tracker and saved profile",
+        ],
+    ),
+    "starter": PlanDefinition(
+        key="starter",
+        label="Starter",
+        can_job_match=True,
+        can_auto_apply=True,
+        can_run_continuous_auto_apply=True,
+        can_use_assistant=True,
+        assistant_monthly_prompts=None,
+        assistant_modes=ASSISTANT_MODES,
+        max_auto_apply_per_day=20,
+        monthly_application_limit=600,
+        price_usd=19,
+        highlights=[
+            "Everything in Basic",
+            "Auto Apply on supported sources",
+            "Up to 600 applications / 30 days",
+            "Unlimited AI assistant prompts",
         ],
     ),
     "pro": PlanDefinition(
@@ -56,16 +80,40 @@ PLAN_DEFINITIONS: dict[str, PlanDefinition] = {
         can_use_assistant=True,
         assistant_monthly_prompts=None,
         assistant_modes=ASSISTANT_MODES,
-        max_auto_apply_per_day=25,
+        max_auto_apply_per_day=50,
+        monthly_application_limit=1500,
+        price_usd=39,
         highlights=[
-            "Everything in Basic",
-            "Auto Apply on supported sources",
+            "Everything in Starter",
+            "Up to 1,500 applications / 30 days",
             "Continuous auto-apply scheduler eligibility",
-            "Unlimited AI assistant prompts",
-            "Priority AI workflow features for cover letters, interviews, and follow-ups",
+            "Priority tailoring for resumes, cover letters, and screening answers",
+        ],
+    ),
+    "power": PlanDefinition(
+        key="power",
+        label="Power",
+        can_job_match=True,
+        can_auto_apply=True,
+        can_run_continuous_auto_apply=True,
+        can_use_assistant=True,
+        assistant_monthly_prompts=None,
+        assistant_modes=ASSISTANT_MODES,
+        max_auto_apply_per_day=150,
+        monthly_application_limit=4500,
+        price_usd=99,
+        highlights=[
+            "Everything in Pro",
+            "Up to 4,500 applications / 30 days",
+            "Highest daily auto-apply throughput",
+            "Best for high-volume and career-transition searches",
         ],
     ),
 }
+
+# Plan tiers that unlock paid features. Anything in this set is treated like
+# the legacy "pro" entitlement for gating purposes.
+PAID_PLAN_KEYS = {"starter", "pro", "power"}
 
 
 COMPETITIVE_ADVANTAGES = [
@@ -97,7 +145,26 @@ ACTIVE_SUBSCRIPTION_STATUSES = {"active", "trialing", "manual", "paid"}
 
 def normalize_plan(plan_name: str | None) -> str:
     plan = (plan_name or "basic").strip().lower()
+    # Legacy rows may store "pro" for any paid tier; keep that mapping valid.
     return plan if plan in PLAN_DEFINITIONS else "basic"
+
+
+def resolve_plan_from_price_id(price_id: str | None, default: str = "pro") -> str:
+    """Map a Stripe price id to a plan tier via env vars.
+
+    Set STRIPE_PRICE_STARTER / STRIPE_PRICE_PRO / STRIPE_PRICE_POWER to the
+    corresponding Stripe price_... ids. Unmapped price ids fall back to `default`.
+    """
+    pid = (price_id or "").strip()
+    if not pid:
+        return default
+    mapping = {
+        os.getenv("STRIPE_PRICE_STARTER", "").strip(): "starter",
+        os.getenv("STRIPE_PRICE_PRO", "").strip(): "pro",
+        os.getenv("STRIPE_PRICE_POWER", "").strip(): "power",
+    }
+    mapping.pop("", None)
+    return mapping.get(pid, default)
 
 
 def get_plan_definition(plan_name: str | None) -> PlanDefinition:

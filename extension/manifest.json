@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "AIapply.ai Assistant",
+  "version": "0.1.0",
+  "description": "Detect job postings, find matches, and tailor your resume with AIapply.ai from any career page.",
+  "permissions": ["storage", "activeTab", "scripting"],
+  "host_permissions": ["<all_urls>"],
+  "action": {
+    "default_title": "AIapply.ai",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

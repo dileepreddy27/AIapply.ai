@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError, sync_playwright
 
 from .models import JobPosting, Profile
+
+MANUAL_ONLY_DOMAINS = ("linkedin.com", "indeed.", "glassdoor.")
 
 
 FIELD_ALIASES = {
@@ -81,6 +84,144 @@ def _attach_files(page: Page, profile: Profile, project_root: Path) -> None:
         cp = (project_root / cover_path).resolve()
         if cp.exists():
             file_inputs.nth(1).set_input_files(str(cp))
+
+
+def prepare_application(
+    job_url: str,
+    applicant: dict[str, str],
+    resume_path: str | None = None,
+    cover_letter_path: str | None = None,
+    answers: list[dict[str, str]] | None = None,
+    submit: bool = False,
+    headless: bool = True,
+    timeout_ms: int = 60000,
+    storage_state_path: Path | None = None,
+) -> dict[str, Any]:
+    """Drive a headless browser to a single job application and fill known fields.
+
+    This is the server-callable entry point (no ``input()`` prompts). It fills the
+    standard identity fields, attaches a resume/cover letter when provided, and
+    only clicks a submit button when ``submit=True``. Returns a structured result
+    so the API can record what happened without trusting the browser blindly.
+    """
+    result: dict[str, Any] = {
+        "job_url": job_url,
+        "status": "prepared",
+        "submitted": False,
+        "filled_fields": [],
+        "error": "",
+    }
+    domain = urlparse(job_url).netloc.lower()
+    if any(d in domain for d in MANUAL_ONLY_DOMAINS):
+        result["status"] = "manual_only"
+        result["error"] = f"{domain} requires manual application."
+        return result
+
+    identity = {
+        "name": applicant.get("name", ""),
+        "email": applicant.get("email", ""),
+        "phone": applicant.get("phone", ""),
+        "location": applicant.get("location", ""),
+        "linkedin": applicant.get("linkedin", ""),
+        "github": applicant.get("github", ""),
+        "portfolio": applicant.get("portfolio", ""),
+    }
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=headless)
+            context_kwargs: dict[str, Any] = {}
+            if storage_state_path and storage_state_path.exists():
+                context_kwargs["storage_state"] = str(storage_state_path)
+            context = browser.new_context(**context_kwargs)
+            page = context.new_page()
+            try:
+                page.goto(job_url, wait_until="domcontentloaded", timeout=timeout_ms)
+                _click_apply(page)
+                for field, value in identity.items():
+                    if value and _try_fill(page, field, value):
+                        result["filled_fields"].append(field)
+                _attach_files_by_path(page, resume_path, cover_letter_path)
+                if answers:
+                    _fill_freeform_answers(page, answers)
+
+                if submit:
+                    submitted = _click_submit(page)
+                    result["submitted"] = submitted
+                    result["status"] = "submitted" if submitted else "review_needed"
+                else:
+                    result["status"] = "prepared_dry_run"
+            except PlaywrightTimeoutError:
+                result["status"] = "timeout"
+                result["error"] = "Page load timed out."
+            finally:
+                if storage_state_path:
+                    storage_state_path.parent.mkdir(parents=True, exist_ok=True)
+                    context.storage_state(path=str(storage_state_path))
+                page.close()
+                context.close()
+                browser.close()
+    except Exception as exc:  # Playwright not installed, browser missing, etc.
+        result["status"] = "error"
+        result["error"] = f"{type(exc).__name__}: {exc}"
+    return result
+
+
+def _attach_files_by_path(
+    page: Page, resume_path: str | None, cover_letter_path: str | None
+) -> None:
+    file_inputs = page.locator("input[type='file']")
+    try:
+        count = file_inputs.count()
+    except Exception:
+        return
+    if count == 0:
+        return
+    if resume_path and Path(resume_path).exists():
+        try:
+            file_inputs.first.set_input_files(resume_path)
+        except Exception:
+            pass
+    if cover_letter_path and Path(cover_letter_path).exists() and count > 1:
+        try:
+            file_inputs.nth(1).set_input_files(cover_letter_path)
+        except Exception:
+            pass
+
+
+def _fill_freeform_answers(page: Page, answers: list[dict[str, str]]) -> None:
+    """Best-effort fill of screening questions matched by label substring."""
+    for item in answers:
+        question = str(item.get("question", "")).strip()
+        answer = str(item.get("answer", "")).strip()
+        if not question or not answer:
+            continue
+        key = question.split("?")[0][:40]
+        try:
+            locator = page.get_by_label(key, exact=False)
+            if locator.count() > 0:
+                locator.first.fill(answer)
+        except Exception:
+            continue
+
+
+def _click_submit(page: Page) -> bool:
+    submit_selectors = [
+        "button:has-text('Submit Application')",
+        "button:has-text('Submit application')",
+        "button:has-text('Send Application')",
+        "button:has-text('Submit')",
+        "button[type='submit']",
+    ]
+    for selector in submit_selectors:
+        try:
+            locator = page.locator(selector)
+            if locator.count() > 0:
+                locator.first.click(timeout=3000)
+                return True
+        except Exception:
+            continue
+    return False
 
 
 def apply_with_review(
