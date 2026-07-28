@@ -1,10 +1,14 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import ThemeToggle from "./theme-toggle";
 
 export const metadata: Metadata = {
   title: "AIapply.ai",
   description: "Role-based job matching with resume RAG, auth, and payments"
 };
+
+// Applies the saved theme before paint to avoid a flash of the default theme.
+const themeInitScript = `(function(){try{var t=localStorage.getItem('aiapply-theme');if(t==='bw'){document.documentElement.setAttribute('data-theme','bw');}}catch(e){}})();`;
 
 export default function RootLayout({
   children
@@ -13,7 +17,13 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+      </head>
+      <body>
+        <ThemeToggle />
+        {children}
+      </body>
     </html>
   );
 }
