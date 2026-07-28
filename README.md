@@ -113,6 +113,31 @@ Then in Supabase Auth:
 - Enable Email/Password provider.
 - Configure redirect URLs for local + Vercel domains.
 
+### Email verification not arriving? (important)
+
+Signup verification emails are sent by **Supabase Auth**, not by this app. If the
+"check your email" message shows but no email arrives, it's a Supabase project setting,
+not app code. Check, in order:
+
+1. **Custom SMTP (the usual fix).** Supabase's built-in email sender is throttled to a
+   few emails/hour and is meant for testing only — under load it silently drops messages.
+   In **Authentication → Emails → SMTP Settings**, configure a real provider (Resend,
+   SendGrid, Postmark, etc.). You already have a Resend key for the backend; reuse it here.
+2. **Confirm email toggle.** **Authentication → Providers → Email → "Confirm email"** must
+   be ON if you want verification. If it's OFF, signup logs the user in immediately — the
+   app now detects this and skips straight to the dashboard (no email needed).
+3. **URL configuration.** **Authentication → URL Configuration**: set **Site URL** and add
+   every redirect target (local `http://127.0.0.1:3000/**`, and your Vercel domain
+   `.../dashboard`) to **Redirect URLs**. A redirect not on this list can suppress the link.
+4. **Rate limits.** **Authentication → Rate Limits**: the default email rate limit is very
+   low. Raise it or (better) use custom SMTP.
+5. **Spam / already-registered.** Check spam. Note Supabase sends **no** email if the address
+   is already registered — the app now surfaces that case and tells the user to sign in.
+
+The signup UI now shows a **Resend verification email** button, distinguishes
+confirmation-disabled / already-registered / needs-confirmation, and offers resend when a
+sign-in fails because the email is unconfirmed.
+
 ## 3) Frontend Setup (Local)
 
 ```powershell
