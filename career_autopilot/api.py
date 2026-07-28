@@ -25,7 +25,14 @@ from .assistant_agent import (
 )
 from .models import JobPosting
 from .profile_options import company_matches_ranking, get_profile_option_payload
-from .plans import ACTIVE_SUBSCRIPTION_STATUSES, COMPETITIVE_ADVANTAGES, get_plan_definition, normalize_plan
+from .plans import (
+    ACTIVE_SUBSCRIPTION_STATUSES,
+    COMPETITIVE_ADVANTAGES,
+    PAID_PLAN_KEYS,
+    get_plan_definition,
+    normalize_plan,
+    resolve_plan_from_price_id,
+)
 from .rag import MatchResult, recommend_jobs_rag, role_suggestions
 from .role_catalog import get_roles_for_sector
 from .scanners import scan_ashby, scan_greenhouse, scan_lever
@@ -811,6 +818,8 @@ class ProfileUpsertRequest(BaseModel):
     sub_profiles: list[dict[str, Any]] = []
     active_sub_profile_id: str = ""
     tailored_documents: list[dict[str, Any]] = []
+    resume_storage_path: str = ""
+    resume_filename: str = ""
 
 
 class TailorRequest(BaseModel):
@@ -876,6 +885,21 @@ def _count_today_applications(sb: Client, user_id: str) -> int:
         )
         count = getattr(resp, "count", None)
         return int(count or 0)
+    except Exception:
+        return 0
+
+
+def _count_month_applications(sb: Client, user_id: str) -> int:
+    since = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    try:
+        resp = (
+            sb.table("applications")
+            .select("id", count="exact")
+            .eq("user_id", user_id)
+            .gte("created_at", since)
+            .execute()
+        )
+        return int(getattr(resp, "count", 0) or 0)
     except Exception:
         return 0
 
@@ -947,21 +971,24 @@ def _resolve_subscription_state(
     raw_status = str(row.get("plan_status", "inactive") or "inactive").strip().lower()
     stripe_customer_id = str(row.get("stripe_customer_id", "") or "").strip()
 
+    # Tier resolution: pick the specific paid tier from the subscription's price id.
+    tier_key = "pro"
     subscription = _subscription_row(sb, user_id)
     if subscription:
         stripe_customer_id = stripe_customer_id or str(subscription.get("stripe_customer_id", "") or "").strip()
         subscription_status = str(subscription.get("status", "") or "").strip().lower()
+        tier_key = resolve_plan_from_price_id(subscription.get("stripe_price_id"), default="pro")
         if subscription_status in ACTIVE_SUBSCRIPTION_STATUSES:
-            raw_plan = "pro"
+            raw_plan = tier_key
             raw_status = subscription_status
 
     if manual_pro_access:
         raw_plan = "pro"
         raw_status = "manual"
-    elif raw_plan == "pro" and raw_status in ACTIVE_SUBSCRIPTION_STATUSES:
+    elif raw_plan in PAID_PLAN_KEYS and raw_status in ACTIVE_SUBSCRIPTION_STATUSES:
         pass
     elif not raw_plan_value and _latest_paid_payment_exists(sb, user_id):
-        raw_plan = "pro"
+        raw_plan = tier_key
         raw_status = "paid"
     else:
         raw_plan = "basic"
@@ -976,22 +1003,30 @@ def _resolve_subscription_state(
     assistant_prompts_used = _assistant_prompt_usage(sb, user_id)
     assistant_limit = plan.assistant_monthly_prompts
     assistant_remaining = None if assistant_limit is None else max(0, assistant_limit - assistant_prompts_used)
+    monthly_limit = plan.monthly_application_limit
+    monthly_used = _count_month_applications(sb, user_id) if monthly_limit else 0
+    monthly_remaining = None if not monthly_limit else max(0, monthly_limit - monthly_used)
     return {
         "plan": plan.key,
         "label": plan.label,
         "status": raw_status,
         "testing_mode": testing_mode,
+        "price_usd": plan.price_usd,
         "stripe_customer_id": stripe_customer_id,
         "manual_pro_access": manual_pro_access,
         "assistant_prompts_used": assistant_prompts_used,
         "assistant_prompts_limit": assistant_limit,
         "assistant_prompts_remaining": assistant_remaining,
+        "applications_used_this_month": monthly_used,
+        "applications_monthly_limit": monthly_limit,
+        "applications_monthly_remaining": monthly_remaining,
         "features": {
             "can_job_match": plan.can_job_match,
             "can_auto_apply": plan.can_auto_apply,
             "can_run_continuous_auto_apply": plan.can_run_continuous_auto_apply,
             "can_use_assistant": plan.can_use_assistant,
             "max_auto_apply_per_day": plan.max_auto_apply_per_day,
+            "monthly_application_limit": monthly_limit,
             "assistant_modes": plan.assistant_modes,
             "highlights": plan.highlights,
         },
@@ -1003,6 +1038,16 @@ def _require_feature(subscription: dict[str, Any], feature: str, detail: str) ->
         raise HTTPException(status_code=403, detail=detail)
 
 
+def _monthly_available_slots(
+    sb: Client, user_id: str, plan_monthly_limit: int | None
+) -> int | None:
+    """Remaining applications this 30-day window, or None if the plan is uncapped."""
+    if not plan_monthly_limit or plan_monthly_limit <= 0:
+        return None
+    used = _count_month_applications(sb, user_id)
+    return max(0, plan_monthly_limit - used)
+
+
 def _run_auto_apply_for_profile(
     sb: Client,
     user_id: str,
@@ -1011,6 +1056,7 @@ def _run_auto_apply_for_profile(
     role_query: str,
     max_jobs: int | None = None,
     plan_max_auto_apply_per_day: int | None = None,
+    plan_monthly_limit: int | None = None,
 ) -> dict[str, Any]:
     app_profile = profile.get("application_profile") or {}
     auto_enabled = bool(app_profile.get("auto_apply_enabled"))
@@ -1032,13 +1078,17 @@ def _run_auto_apply_for_profile(
 
     existing_today = _count_today_applications(sb, user_id)
     available_slots = max(0, daily_cap - existing_today)
+    monthly_slots = _monthly_available_slots(sb, user_id, plan_monthly_limit)
+    if monthly_slots is not None:
+        available_slots = min(available_slots, monthly_slots)
     if available_slots == 0:
+        reached = "Monthly" if monthly_slots == 0 else "Daily"
         return {
             "role": role_query,
             "matched_jobs": 0,
             "queued_applications": 0,
             "email_confirmations_sent": 0,
-            "message": "Daily auto-apply limit already reached for this user.",
+            "message": f"{reached} auto-apply limit already reached for this user.",
         }
 
     avoid_text = str(app_profile.get("companies_to_avoid", "") or "")
@@ -1119,6 +1169,7 @@ def _queue_selected_jobs_for_profile(
     selected_jobs: list[dict[str, Any]],
     max_jobs: int | None = None,
     plan_max_auto_apply_per_day: int | None = None,
+    plan_monthly_limit: int | None = None,
 ) -> dict[str, Any]:
     app_profile = profile.get("application_profile") or {}
     auto_enabled = bool(app_profile.get("auto_apply_enabled"))
@@ -1140,13 +1191,17 @@ def _queue_selected_jobs_for_profile(
 
     existing_today = _count_today_applications(sb, user_id)
     available_slots = max(0, daily_cap - existing_today)
+    monthly_slots = _monthly_available_slots(sb, user_id, plan_monthly_limit)
+    if monthly_slots is not None:
+        available_slots = min(available_slots, monthly_slots)
     if available_slots == 0:
+        reached = "Monthly" if monthly_slots == 0 else "Daily"
         return {
             "role": role_query,
             "matched_jobs": len(selected_jobs),
             "queued_applications": 0,
             "email_confirmations_sent": 0,
-            "message": "Daily auto-apply limit already reached for this user.",
+            "message": f"{reached} auto-apply limit already reached for this user.",
         }
 
     avoid_text = str(app_profile.get("companies_to_avoid", "") or "")
@@ -1334,6 +1389,8 @@ def upsert_profile(
             "sub_profiles": sub_profiles,
             "active_sub_profile_id": body.active_sub_profile_id,
             "tailored_documents": body.tailored_documents[:50],
+            "resume_storage_path": body.resume_storage_path,
+            "resume_filename": body.resume_filename,
         },
     }
     try:
@@ -1767,6 +1824,90 @@ def tailor_documents(
     }
 
 
+RESUME_BUCKET = os.getenv("SUPABASE_RESUME_BUCKET", "resumes")
+
+
+@app.post("/api/resume/upload")
+async def upload_resume(
+    resume_file: UploadFile = File(...),
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Store the user's resume in Supabase Storage so the auto-submit engine can
+    upload it to ATS forms. Requires a Storage bucket named by SUPABASE_RESUME_BUCKET
+    (default 'resumes'). Returns the stored path to save on the profile.
+    """
+    user = _current_user(authorization)
+    user_id = _user_id_from_user(user)
+    payload = await resume_file.read()
+    filename = Path(resume_file.filename or "resume.pdf").name
+    suffix = Path(filename).suffix.lower()
+    if suffix not in {".pdf", ".docx", ".txt", ".md"}:
+        raise HTTPException(status_code=400, detail="Use PDF, DOCX, TXT, or MD.")
+    # Validate it parses so we don't store an unreadable file.
+    try:
+        text = _extract_resume_text(filename, payload)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if len(text.strip()) < 40:
+        raise HTTPException(status_code=400, detail="Resume text is too short.")
+
+    storage_path = f"{user_id}/{filename}"
+    sb = _supabase()
+    content_type = {
+        ".pdf": "application/pdf",
+        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".txt": "text/plain",
+        ".md": "text/markdown",
+    }[suffix]
+    try:
+        sb.storage.from_(RESUME_BUCKET).upload(
+            storage_path,
+            payload,
+            {"content-type": content_type, "upsert": "true"},
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Resume upload failed. Ensure a Storage bucket '{RESUME_BUCKET}' exists. ({exc})"
+            ),
+        )
+
+    # Persist the path onto the profile's application_profile (merge, don't clobber).
+    try:
+        profile = _fetch_profile_row(sb, user_id) or {}
+        app_profile = dict(profile.get("application_profile") or {})
+        app_profile["resume_storage_path"] = storage_path
+        app_profile["resume_filename"] = filename
+        sb.table("profiles").upsert(
+            {"id": user_id, "email": user.get("email", ""), "application_profile": app_profile}
+        ).execute()
+    except Exception:
+        pass
+    return {"ok": True, "resume_storage_path": storage_path, "resume_filename": filename}
+
+
+def _download_resume_to_temp(sb: Client, storage_path: str) -> str | None:
+    if not storage_path:
+        return None
+    try:
+        data = sb.storage.from_(RESUME_BUCKET).download(storage_path)
+    except Exception:
+        return None
+    if not data:
+        return None
+    suffix = Path(storage_path).suffix or ".pdf"
+    import tempfile
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    try:
+        tmp.write(data)
+        tmp.flush()
+    finally:
+        tmp.close()
+    return tmp.name
+
+
 @app.post("/api/rag/match")
 async def rag_match(
     resume_file: UploadFile = File(...),
@@ -1912,6 +2053,7 @@ def auto_apply_run(
         "target_role", ""
     )
     max_jobs = max(1, min(body.max_jobs, 20))
+    monthly_limit = subscription["features"].get("monthly_application_limit")
     if body.selected_jobs:
         return _queue_selected_jobs_for_profile(
             sb=sb,
@@ -1922,6 +2064,7 @@ def auto_apply_run(
             selected_jobs=body.selected_jobs,
             max_jobs=max_jobs,
             plan_max_auto_apply_per_day=int(subscription["features"]["max_auto_apply_per_day"]),
+            plan_monthly_limit=monthly_limit,
         )
     return _run_auto_apply_for_profile(
         sb=sb,
@@ -1931,6 +2074,7 @@ def auto_apply_run(
         role_query=role_query,
         max_jobs=max_jobs,
         plan_max_auto_apply_per_day=int(subscription["features"]["max_auto_apply_per_day"]),
+        plan_monthly_limit=monthly_limit,
     )
 
 
@@ -1988,7 +2132,9 @@ def auto_apply_submit(
         "linkedin": str(app_profile.get("linkedin_url", "") or ""),
         "portfolio": str(app_profile.get("portfolio_url", "") or ""),
     }
-    resume_path = os.getenv("AUTO_APPLY_RESUME_PATH", "").strip() or None
+    resume_path = _download_resume_to_temp(sb, str(app_profile.get("resume_storage_path", "") or ""))
+    if not resume_path:
+        resume_path = os.getenv("AUTO_APPLY_RESUME_PATH", "").strip() or None
     require_approval = bool(app_profile.get("require_approval_before_apply", True))
     # Never auto-submit when the user still wants to approve each application.
     do_submit = bool(not body.dry_run and not require_approval)
@@ -2077,6 +2223,7 @@ def auto_apply_tick(x_auto_apply_secret: str | None = Header(default=None)) -> d
                 profile=profile,
                 role_query=role_query,
                 plan_max_auto_apply_per_day=int(subscription["features"]["max_auto_apply_per_day"]),
+                plan_monthly_limit=subscription["features"].get("monthly_application_limit"),
             )
             processed += 1
             queued += int(result.get("queued_applications", 0))
@@ -2125,12 +2272,13 @@ async def stripe_webhook(request: Request) -> dict[str, Any]:
                 ).execute()
             except Exception:
                 pass
+            checkout_price_id = (checkout.get("metadata") or {}).get("price_id", "")
             try:
                 sb.table("profiles").upsert(
                     {
                         "id": user_id,
                         "email": checkout.get("customer_details", {}).get("email", ""),
-                        "plan": "pro",
+                        "plan": resolve_plan_from_price_id(checkout_price_id),
                         "plan_status": "active",
                         "stripe_customer_id": checkout.get("customer", ""),
                     }
@@ -2228,10 +2376,11 @@ def _apply_subscription_event(sb: Client, subscription: dict[str, Any]) -> None:
     # Downgrade the profile when the subscription is no longer active.
     if user_id:
         active = status in ACTIVE_SUBSCRIPTION_STATUSES
+        tier = resolve_plan_from_price_id(price_id) if active else "basic"
         try:
             sb.table("profiles").update(
                 {
-                    "plan": "pro" if active else "basic",
+                    "plan": tier,
                     "plan_status": status if active else "canceled",
                 }
             ).eq("id", user_id).execute()

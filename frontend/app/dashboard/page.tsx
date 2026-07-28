@@ -140,18 +140,23 @@ type SubscriptionFeatures = {
   can_run_continuous_auto_apply: boolean;
   can_use_assistant: boolean;
   max_auto_apply_per_day: number;
+  monthly_application_limit?: number | null;
   assistant_modes: string[];
   highlights: string[];
 };
 
 type SubscriptionState = {
-  plan: "basic" | "pro";
+  plan: string;
   label: string;
   status: string;
   testing_mode?: boolean;
+  price_usd?: number;
   assistant_prompts_used: number;
   assistant_prompts_limit: number | null;
   assistant_prompts_remaining: number | null;
+  applications_used_this_month?: number;
+  applications_monthly_limit?: number | null;
+  applications_monthly_remaining?: number | null;
   features: SubscriptionFeatures;
 };
 
@@ -207,12 +212,16 @@ function defaultSubscription(): SubscriptionState {
     assistant_prompts_used: 0,
     assistant_prompts_limit: 20,
     assistant_prompts_remaining: 20,
+    applications_used_this_month: 0,
+    applications_monthly_limit: 0,
+    applications_monthly_remaining: 0,
     features: {
       can_job_match: true,
       can_auto_apply: false,
       can_run_continuous_auto_apply: false,
       can_use_assistant: true,
       max_auto_apply_per_day: 0,
+      monthly_application_limit: 0,
       assistant_modes: [],
       highlights: []
     }
@@ -307,6 +316,8 @@ export default function DashboardPage() {
   const [showApplications, setShowApplications] = useState(false);
   const [activeStep, setActiveStep] = useState<DashboardStep>("profile");
 
+  const [resumeStoragePath, setResumeStoragePath] = useState("");
+  const [resumeStorageFilename, setResumeStorageFilename] = useState("");
   const [tailoredDocuments, setTailoredDocuments] = useState<TailoredDocument[]>([]);
   const [tailorJobUrl, setTailorJobUrl] = useState("");
   const [tailorMode, setTailorMode] = useState<"resume" | "cover_letter">("resume");
@@ -702,6 +713,8 @@ export default function DashboardPage() {
       setRequireApprovalBeforeApply(storedAutoApplyEnabled ? Boolean(app.require_approval_before_apply) : false);
       setJobAlertsEnabled(Boolean(app.job_alerts_enabled));
       setTailoredDocuments(Array.isArray(app.tailored_documents) ? app.tailored_documents : []);
+      setResumeStoragePath(app.resume_storage_path ?? "");
+      setResumeStorageFilename(app.resume_filename ?? "");
       setWorkPreferences((app.work_preferences || []).join(", "));
       setCompanyRankingFilter(app.company_ranking_filter ?? "any");
       setCompaniesToAvoid(app.companies_to_avoid ?? "");
@@ -765,6 +778,29 @@ export default function DashboardPage() {
     } catch (err) {
       const detail = err instanceof Error ? err.message : "Application update failed.";
       setMessage(detail);
+    }
+  }
+
+  async function uploadResumeToStorage(file: File): Promise<void> {
+    if (!isBackendConfigured()) {
+      setMessage(backendConfigMessage());
+      return;
+    }
+    setMessage("Uploading resume…");
+    try {
+      const formData = new FormData();
+      formData.set("resume_file", file);
+      const res = await authFetch(`${backendUrl}/api/resume/upload`, {
+        method: "POST",
+        body: formData
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.detail ?? "Resume upload failed.");
+      setResumeStoragePath(data.resume_storage_path ?? "");
+      setResumeStorageFilename(data.resume_filename ?? "");
+      setMessage(`Resume saved for auto-submit: ${data.resume_filename ?? ""}`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Resume upload failed.");
     }
   }
 
@@ -920,6 +956,8 @@ export default function DashboardPage() {
       require_approval_before_apply: autoApplyEnabled ? requireApprovalBeforeApply : false,
       job_alerts_enabled: jobAlertsEnabled,
       tailored_documents: tailoredDocuments,
+      resume_storage_path: resumeStoragePath,
+      resume_filename: resumeStorageFilename,
       company_ranking_filter: companyRankingFilter,
       companies_to_avoid: companiesToAvoid,
       max_applications_per_day: Number(maxApplicationsPerDay || "10"),
@@ -1272,8 +1310,8 @@ export default function DashboardPage() {
       setMessage(backendConfigMessage());
       return;
     }
-    if (subscription.plan === "pro" && subscription.status !== "inactive") {
-      setMessage("This account already has Pro access.");
+    if (subscription.plan !== "basic" && subscription.status !== "inactive") {
+      setMessage("This account already has a paid plan.");
       return;
     }
     if (!priceId) {
@@ -1405,6 +1443,11 @@ export default function DashboardPage() {
           <span className={`plan-pill ${subscription.plan}`}>{subscription.label}</span>
           <h3>{assistantUsageLabel}</h3>
           <p>Status: {testingPremiumMode ? "testing unlock active" : subscription.status.replace(/_/g, " ")}</p>
+          {subscription.applications_monthly_limit ? (
+            <p>
+              Applications: {subscription.applications_used_this_month ?? 0}/{subscription.applications_monthly_limit} this month
+            </p>
+          ) : null}
           <p className="field-hint">Testing mode is active, so Auto Apply and assistant workflows stay visible while we validate the product flow.</p>
         </div>
 
@@ -1810,6 +1853,22 @@ export default function DashboardPage() {
               <label>
                 Location
                 <input value={location} onChange={(e) => setLocation(e.target.value)} />
+              </label>
+              <label className="dashboard-field-wide">
+                Resume for Auto-Submit
+                <input
+                  type="file"
+                  accept=".pdf,.docx,.txt,.md"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) void uploadResumeToStorage(file);
+                  }}
+                />
+                <span className="field-hint">
+                  {resumeStorageFilename
+                    ? `Stored: ${resumeStorageFilename} (used when the submit engine uploads documents)`
+                    : "Upload once; the auto-submit engine attaches this to application forms."}
+                </span>
               </label>
             </div>
             <div className="toggle-grid">

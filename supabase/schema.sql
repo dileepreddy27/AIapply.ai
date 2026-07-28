@@ -9,7 +9,7 @@ create table if not exists public.profiles (
   target_role text default '',
   skills text[] default '{}',
   experience_level text default '',
-  plan text not null default 'basic' check (plan in ('basic', 'pro')),
+  plan text not null default 'basic' check (plan in ('basic', 'starter', 'pro', 'power')),
   plan_status text not null default 'inactive',
   stripe_customer_id text,
   manual_pro_access boolean not null default false,
@@ -23,6 +23,10 @@ alter table public.profiles
   add column if not exists application_profile jsonb not null default '{}'::jsonb;
 alter table public.profiles
   add column if not exists plan text not null default 'basic';
+-- Widen the plan check to the volume tiers (Starter / Pro / Power).
+alter table public.profiles drop constraint if exists profiles_plan_check;
+alter table public.profiles
+  add constraint profiles_plan_check check (plan in ('basic', 'starter', 'pro', 'power'));
 alter table public.profiles
   add column if not exists plan_status text not null default 'inactive';
 alter table public.profiles

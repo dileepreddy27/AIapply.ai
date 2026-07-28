@@ -85,6 +85,23 @@ def cmd_web(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_worker(args: argparse.Namespace) -> None:
+    from .worker import run_worker
+
+    run_worker(
+        interval=args.interval,
+        dry_run=not args.submit,
+        batch=args.batch,
+        once=args.once,
+    )
+
+
+def cmd_mcp(args: argparse.Namespace) -> None:
+    from .mcp_server import main as mcp_main
+
+    mcp_main()
+
+
 def cmd_api(args: argparse.Namespace) -> None:
     try:
         import uvicorn
@@ -148,6 +165,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_api.add_argument("--port", type=int, default=8000)
     p_api.add_argument("--reload", action="store_true")
     p_api.set_defaults(func=cmd_api)
+
+    p_worker = sub.add_parser("worker", help="Run the background auto-submit worker")
+    p_worker.add_argument("--interval", type=int, default=120, help="Seconds between passes")
+    p_worker.add_argument("--batch", type=int, default=10, help="Applications per pass")
+    p_worker.add_argument("--submit", action="store_true", help="Actually submit (default dry-run)")
+    p_worker.add_argument("--once", action="store_true", help="Run a single pass and exit")
+    p_worker.set_defaults(func=cmd_worker)
+
+    p_mcp = sub.add_parser("mcp", help="Run the MCP server (stdio) exposing job tools")
+    p_mcp.set_defaults(func=cmd_mcp)
 
     return parser
 

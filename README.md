@@ -27,6 +27,7 @@ backend (FastAPI / Render)
   - /api/subscription/me
   - /api/rag/match
   - /api/jobs/matches            (live match feed, no resume re-upload)
+  - /api/resume/upload           (store resume in Supabase Storage)
   - /api/tailor                  (resume / cover-letter tailoring)
   - /api/profile/application-answers  (work-auth auto-answers)
   - /api/assistant/me
@@ -190,6 +191,43 @@ Open:
 
 See [docs/roadmap.md](docs/roadmap.md) for the feature build-out and the plan for
 production auto-submit hardening and mobile/extension surfaces.
+
+## Plans
+
+Volume tiers modeled on the market (`career_autopilot/plans.py`):
+
+| Plan | Price | Auto-applies / 30 days |
+| --- | --- | --- |
+| Basic | Free | 0 (matching + assistant only) |
+| Starter | $19 | 600 |
+| Pro | $39 | 1,500 |
+| Power | $99 | 4,500 |
+
+Map each Stripe price id to a tier with `STRIPE_PRICE_STARTER` / `STRIPE_PRICE_PRO` /
+`STRIPE_PRICE_POWER`.
+
+## Extra surfaces (CLI, worker, MCP, extension)
+
+```powershell
+# Background auto-submit worker (separate Render worker; dry-run by default)
+python -m career_autopilot.main worker --interval 120        # add --submit to go live
+# MCP server (stdio) exposing search_roles / match_jobs / tailor
+python -m career_autopilot.main mcp
+```
+
+- **Chrome extension**: load `extension/` unpacked — see [extension/README.md](extension/README.md).
+- **Resume storage**: create a Supabase Storage bucket named by `SUPABASE_RESUME_BUCKET`
+  (default `resumes`) so the auto-submit engine can upload documents.
+
+## Tests
+
+```powershell
+pip install -r requirements-dev.txt
+python -m pytest -q
+```
+
+CI runs the backend tests and the frontend typecheck/build on every push
+([.github/workflows/ci.yml](.github/workflows/ci.yml)).
 
 ## Plans
 

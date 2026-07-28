@@ -25,19 +25,35 @@ Feature parity work modeled on tsenta.com:
 - **Auto-submit engine (experimental)** — `apply_bot.prepare_application` (server-callable,
   headless, no prompts) + `POST /api/auto-apply/submit` (consent-gated, dry-run default).
 
+## Shipped (2026-07, wave 2 — advanced)
+
+- **Volume pricing tiers** — Starter / Pro / Power ($19/$39/$99) with 600 / 1,500 / 4,500
+  monthly application caps (`plans.py`), resolved from Stripe price ids
+  (`STRIPE_PRICE_STARTER|PRO|POWER`); monthly caps enforced in auto-apply.
+- **Server-side resume storage** — `POST /api/resume/upload` → Supabase Storage bucket
+  (`SUPABASE_RESUME_BUCKET`, default `resumes`); the submit engine downloads and uploads it.
+- **Background auto-submit worker** — `career_autopilot/worker.py`, run via
+  `python -m career_autopilot.main worker [--submit] [--once]`; polls `queued_auto_apply`
+  rows and drives the engine (consent-checked, dry-run by default).
+- **MCP server** — `career_autopilot/mcp_server.py` exposes `search_roles`, `match_jobs`,
+  `tailor` over stdio (`python -m career_autopilot.main mcp`); supports mcp 1.x and 2.x.
+- **Chrome extension** — `extension/` (MV3): detects the job on the current tab and calls
+  the API to find matches / tailor documents.
+- **Tests + CI** — `tests/` pytest suite (27 tests) + `.github/workflows/ci.yml`
+  (backend tests + frontend typecheck/build).
+
 ## Big item 1 — Production auto-submit hardening
+
+Wave-2 progress: server-side resume storage and a background worker now exist. Remaining:
 
 The current engine drives a headless Chromium against a single job URL and fills the
 standard identity fields. To make it production-grade:
 
-1. **Server-side resume storage.** Auto-submit needs a real file to upload. Add a
-   Supabase Storage bucket (`resumes/<user_id>.pdf`), an upload endpoint, and point
-   `AUTO_APPLY_RESUME_PATH` / per-user lookup at it. Today the engine skips the upload
-   when no file is configured.
-2. **Background worker, not request-thread.** Playwright submission is slow and blocks
-   the web dyno. Move it to a queue (Render background worker / Celery / RQ) that pulls
-   `queued_auto_apply` rows, submits, and writes results back. `/api/auto-apply/submit`
-   becomes an enqueue call.
+1. ~~Server-side resume storage.~~ **Done** — `POST /api/resume/upload` → Supabase Storage
+   (`SUPABASE_RESUME_BUCKET`); the submit engine downloads it per user before filling forms.
+2. ~~Background worker.~~ **Done (v1)** — `career_autopilot/worker.py` polls `queued_auto_apply`
+   and drives the engine. Still worth adding: a real queue (RQ/Celery) so `/api/auto-apply/submit`
+   only enqueues, plus retry/backoff and concurrency control.
 3. **Per-ATS adapters.** Generic label/placeholder matching handles simple forms; add
    dedicated flows for Greenhouse, Lever, Ashby, and Workday (each has predictable DOM /
    multi-step wizards, custom questions, EEO pages). Keep a shared `prepare_application`
