@@ -13,3 +13,4 @@ data/jobs.jsonl
 data/pipeline.csv
 data/browser_state.json
 logs/
+.claude/

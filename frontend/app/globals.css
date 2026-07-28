@@ -1011,3 +1011,187 @@ button:disabled {
   flex-wrap: wrap;
   gap: 6px;
 }
+
+/* ---- Theme toggle button ---- */
+.theme-toggle {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  z-index: 60;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid #111;
+  background: #fff;
+  color: #111;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+
+.theme-toggle:hover {
+  opacity: 0.85;
+}
+
+/* =====================================================================
+   Black & White theme — activated via <html data-theme="bw">.
+   High-contrast monochrome override for both the auth page and the
+   dark-teal dashboard.
+   ===================================================================== */
+:root[data-theme="bw"] {
+  --bg-a: #ffffff;
+  --bg-b: #ffffff;
+  --ink: #000000;
+  --ink-soft: #333333;
+  --brand: #000000;
+  --card: #ffffff;
+  --line: #000000;
+}
+
+:root[data-theme="bw"] body {
+  background: #ffffff;
+}
+
+:root[data-theme="bw"] .theme-toggle {
+  background: #000;
+  color: #fff;
+  border-color: #fff;
+  box-shadow: 0 0 0 1px #000;
+}
+
+/* Auth page */
+:root[data-theme="bw"] .bg-orb {
+  display: none;
+}
+:root[data-theme="bw"] .auth-card {
+  background: #fff;
+  border-color: #000;
+}
+:root[data-theme="bw"] .brand,
+:root[data-theme="bw"] .subtitle {
+  color: #000;
+}
+:root[data-theme="bw"] .switch {
+  background: #fff;
+  color: #000;
+  border-color: #000;
+}
+:root[data-theme="bw"] .switch.active {
+  background: #000;
+  color: #fff;
+}
+:root[data-theme="bw"] .auth-form button[type="submit"] {
+  background: #000;
+  color: #fff;
+}
+
+/* Dashboard shell */
+:root[data-theme="bw"] .app-shell {
+  background: #fff;
+  color: #000;
+}
+:root[data-theme="bw"] .app-shell .brand,
+:root[data-theme="bw"] .app-shell h1,
+:root[data-theme="bw"] .app-shell h2,
+:root[data-theme="bw"] .app-shell h3,
+:root[data-theme="bw"] .app-shell h4 {
+  color: #000;
+}
+:root[data-theme="bw"] .app-shell input,
+:root[data-theme="bw"] .app-shell select,
+:root[data-theme="bw"] .app-shell textarea {
+  background: #fff;
+  color: #000;
+  border-color: #000;
+}
+:root[data-theme="bw"] .app-shell input::placeholder,
+:root[data-theme="bw"] .app-shell textarea::placeholder {
+  color: rgba(0, 0, 0, 0.45);
+}
+:root[data-theme="bw"] .app-shell button {
+  background: #000;
+  color: #fff;
+  border-color: #000;
+}
+:root[data-theme="bw"] .app-shell .ghost {
+  background: #fff;
+  color: #000;
+  border: 1px solid #000;
+}
+
+/* Sidebar */
+:root[data-theme="bw"] .dashboard-sidebar {
+  background: #000;
+  border-right: 1px solid #000;
+}
+:root[data-theme="bw"] .dashboard-sidebar,
+:root[data-theme="bw"] .sidebar-brand h1,
+:root[data-theme="bw"] .sidebar-copy,
+:root[data-theme="bw"] .app-shell .sidebar-plan-card p {
+  color: #fff;
+}
+:root[data-theme="bw"] .app-shell .brand {
+  color: #000;
+}
+:root[data-theme="bw"] .dashboard-sidebar .brand {
+  color: #fff;
+}
+:root[data-theme="bw"] .sidebar-link {
+  color: #fff;
+  background: transparent;
+}
+:root[data-theme="bw"] .sidebar-link.active {
+  background: #fff;
+  color: #000;
+}
+:root[data-theme="bw"] .sidebar-plan-card {
+  border: 1px solid #fff;
+}
+
+/* Cards, chips, pills */
+:root[data-theme="bw"] .metric-card,
+:root[data-theme="bw"] .dashboard-card,
+:root[data-theme="bw"] .job-row-card,
+:root[data-theme="bw"] .queue-preview-card,
+:root[data-theme="bw"] .sub-profile-card,
+:root[data-theme="bw"] .assistant-card,
+:root[data-theme="bw"] .assistant-drawer,
+:root[data-theme="bw"] .pipeline-column,
+:root[data-theme="bw"] .pipeline-card,
+:root[data-theme="bw"] .source-diagnostics,
+:root[data-theme="bw"] .permission-panel {
+  background: #fff;
+  border-color: #000;
+  color: #000;
+}
+:root[data-theme="bw"] .feature-kicker,
+:root[data-theme="bw"] .app-shell .field-hint,
+:root[data-theme="bw"] .app-shell .empty-state,
+:root[data-theme="bw"] .status-inline {
+  color: #333;
+}
+:root[data-theme="bw"] .topbar-chip,
+:root[data-theme="bw"] .status-pill,
+:root[data-theme="bw"] .plan-pill,
+:root[data-theme="bw"] .plan-pill.basic,
+:root[data-theme="bw"] .suggestion-chip.selected {
+  background: #000;
+  color: #fff;
+  border-color: #000;
+}
+:root[data-theme="bw"] .suggestion-chip {
+  background: #fff;
+  color: #000;
+  border-color: #000;
+}
+:root[data-theme="bw"] .status-banner {
+  background: #000;
+  color: #fff;
+}
+:root[data-theme="bw"] .app-shell a {
+  color: #000;
+  text-decoration: underline;
+}
+:root[data-theme="bw"] .pipeline-column {
+  background: #f4f4f4;
+}
