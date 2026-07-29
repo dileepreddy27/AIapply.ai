@@ -8,7 +8,7 @@ export const metadata: Metadata = {
 };
 
 // Applies the saved theme before paint to avoid a flash of the default theme.
-const themeInitScript = `(function(){try{var t=localStorage.getItem('aiapply-theme');if(t==='bw'){document.documentElement.setAttribute('data-theme','bw');}}catch(e){}})();`;
+const themeInitScript = `(function(){try{var d=document.documentElement;var t=localStorage.getItem('aiapply-theme');if(t==='bw'){d.setAttribute('data-theme','bw');}var m=localStorage.getItem('aiapply-mode');d.setAttribute('data-mode',m==='dark'?'dark':'light');}catch(e){}})();`;
 
 export default function RootLayout({
   children

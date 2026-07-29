@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 
 type Stage = "find" | "prep" | "apply" | "track";
@@ -135,7 +135,36 @@ const FAQS = [
 export default function HomePage() {
   const [stage, setStage] = useState<Stage>("find");
   const [openFaq, setOpenFaq] = useState<number | null>(0);
+  const [dark, setDark] = useState(false);
   const active = STAGES.find((s) => s.key === stage)!;
+
+  useEffect(() => {
+    // Flag the landing so the global B&W toggle hides here, and apply saved mode.
+    document.documentElement.classList.add("on-landing");
+    let saved: string | null = null;
+    try {
+      saved = window.localStorage.getItem("aiapply-mode");
+    } catch {
+      saved = null;
+    }
+    const isDark = saved === "dark";
+    setDark(isDark);
+    document.documentElement.setAttribute("data-mode", isDark ? "dark" : "light");
+    return () => {
+      document.documentElement.classList.remove("on-landing");
+    };
+  }, []);
+
+  function toggleMode() {
+    const next = dark ? "light" : "dark";
+    setDark(!dark);
+    document.documentElement.setAttribute("data-mode", next);
+    try {
+      window.localStorage.setItem("aiapply-mode", next);
+    } catch {
+      /* ignore */
+    }
+  }
 
   return (
     <main className="landing">
@@ -148,6 +177,16 @@ export default function HomePage() {
             <a href="#faq">FAQ</a>
           </nav>
           <div className="lp-nav-cta">
+            <button
+              type="button"
+              className="lp-mode-btn"
+              onClick={toggleMode}
+              aria-pressed={dark}
+              aria-label={dark ? "Switch to light mode" : "Switch to dark mode"}
+              title={dark ? "Light mode" : "Dark mode"}
+            >
+              {dark ? "☀︎ Light" : "☾ Dark"}
+            </button>
             <Link href="/login" className="lp-btn ghost">Log in</Link>
             <Link href="/login" className="lp-btn solid">Sign up</Link>
           </div>

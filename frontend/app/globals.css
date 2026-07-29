@@ -1685,3 +1685,47 @@ button:disabled {
 .plan-pill.basic { background: #f0f0ef; color: #333; }
 .app-shell a { color: #0a0a0a; }
 .assistant-fab { background: #0a0a0a; color: #fff; }
+
+/* =====================================================================
+   Landing dark / light mode
+   ===================================================================== */
+/* On the landing page, hide the global (app/auth) black-and-white toggle
+   so there is a single, contextual control in the nav. */
+.on-landing .theme-toggle { display: none; }
+
+.lp-mode-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  border: 1px solid var(--lp-line);
+  background: transparent;
+  color: var(--lp-ink);
+  font-size: 14px;
+  font-weight: 600;
+  padding: 9px 14px;
+  cursor: pointer;
+}
+.lp-mode-btn:hover { background: rgba(127, 127, 127, 0.1); }
+
+/* Dark palette — scoped to the landing so it never affects app/auth. */
+:root[data-mode="dark"] .landing {
+  --lp-ink: #f4f4f5;
+  --lp-mut: #a1a1aa;
+  --lp-line: #27272a;
+  --lp-accent: #fb923c;
+  background: #0a0a0a;
+}
+:root[data-mode="dark"] .lp-nav {
+  background: rgba(10, 10, 10, 0.8);
+}
+:root[data-mode="dark"] .lp-btn.solid { background: #f4f4f5; color: #0a0a0a; }
+:root[data-mode="dark"] .lp-btn.invert { background: #0a0a0a; color: #f4f4f5; }
+:root[data-mode="dark"] .lp-btn.outline { background: transparent; }
+:root[data-mode="dark"] .lp-tab { background: #141414; }
+:root[data-mode="dark"] .lp-tab.active { color: #0a0a0a; }
+:root[data-mode="dark"] .lp-tab.active .lp-tab-num { color: rgba(0, 0, 0, 0.55); }
+:root[data-mode="dark"] .lp-price { background: #111113; }
+:root[data-mode="dark"] .lp-price.featured { color: #0a0a0a; }
+:root[data-mode="dark"] .lp-price.featured .lp-body { color: rgba(0, 0, 0, 0.7); }
+:root[data-mode="dark"] .lp-price.featured .lp-price-amt span { color: rgba(0, 0, 0, 0.6); }
