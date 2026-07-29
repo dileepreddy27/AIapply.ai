@@ -147,6 +147,57 @@ def scan_ashby(org: str) -> list[JobPosting]:
     return [j for j in out if j.url]
 
 
+def scan_smartrecruiters(company: str) -> list[JobPosting]:
+    url = f"https://api.smartrecruiters.com/v1/companies/{company}/postings?limit=100"
+    data = _get_json(url)
+    rows = data.get("content", []) if isinstance(data, dict) else []
+    out: list[JobPosting] = []
+    for j in rows:
+        if not isinstance(j, dict):
+            continue
+        loc = j.get("location") or {}
+        parts = [str(loc.get("city", "") or ""), str(loc.get("region", "") or ""), str(loc.get("country", "") or "")]
+        location = ", ".join(p for p in parts if p)
+        if loc.get("remote"):
+            location = f"{location} (Remote)".strip(", ").strip()
+        posting_id = str(j.get("id", "") or "")
+        apply_url = f"https://jobs.smartrecruiters.com/{company}/{posting_id}" if posting_id else ""
+        out.append(
+            _normalize_job(
+                source="smartrecruiters",
+                url=apply_url,
+                title=str(j.get("name", "")),
+                company=str((j.get("company") or {}).get("name", "") or company),
+                location=location,
+                description="",
+                posted_at=j.get("releasedDate") or j.get("createdOn") or "",
+            )
+        )
+    return [j for j in out if j.url]
+
+
+def scan_recruitee(company: str) -> list[JobPosting]:
+    url = f"https://{company}.recruitee.com/api/offers/"
+    data = _get_json(url)
+    rows = data.get("offers", []) if isinstance(data, dict) else []
+    out: list[JobPosting] = []
+    for j in rows:
+        if not isinstance(j, dict):
+            continue
+        out.append(
+            _normalize_job(
+                source="recruitee",
+                url=str(j.get("careers_url", "") or j.get("careers_apply_url", "")),
+                title=str(j.get("title", "")),
+                company=company,
+                location=str(j.get("location", "") or ""),
+                description=str(j.get("description", "") or ""),
+                posted_at=j.get("published_at") or j.get("created_at") or "",
+            )
+        )
+    return [j for j in out if j.url]
+
+
 def scan_manual_urls(path: Path) -> list[JobPosting]:
     if not path.exists():
         return []

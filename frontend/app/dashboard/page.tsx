@@ -191,7 +191,7 @@ type PersistProfileOptions = {
   successMessage?: string | null;
 };
 
-type DashboardStep = "dashboard" | "profile" | "matched_jobs" | "bookmarks" | "auto_apply" | "analytics";
+type DashboardStep = "dashboard" | "profile" | "matched_jobs" | "bookmarks" | "auto_apply" | "analytics" | "tracker";
 
 function cleanPriceId(raw: string): string {
   return raw
@@ -479,6 +479,43 @@ export default function DashboardPage() {
     if (score >= 55) return "#ea580c";
     return "#0a0a0a";
   }
+  function statusMeta(status: string): { label: string; tone: string } {
+    switch (status) {
+      case "applied":
+        return { label: "Submitted", tone: "green" };
+      case "replied":
+        return { label: "Replied", tone: "green" };
+      case "interviewing":
+        return { label: "Interview", tone: "blue" };
+      case "viewed":
+        return { label: "Viewed", tone: "slate" };
+      case "queued_auto_apply":
+        return { label: "Queued", tone: "amber" };
+      case "approval_required":
+        return { label: "Needs you", tone: "red" };
+      case "rejected":
+        return { label: "Failed", tone: "red" };
+      case "withdrawn":
+        return { label: "Skipped", tone: "slate" };
+      default:
+        return { label: status.replace(/_/g, " "), tone: "slate" };
+    }
+  }
+  function relativeTime(iso?: string): string {
+    if (!iso) return "—";
+    const then = new Date(iso).getTime();
+    if (Number.isNaN(then)) return "—";
+    const secs = Math.max(0, Math.floor((Date.now() - then) / 1000));
+    if (secs < 60) return "just now";
+    const mins = Math.floor(secs / 60);
+    if (mins < 60) return `${mins} min${mins === 1 ? "" : "s"} ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs} hour${hrs === 1 ? "" : "s"} ago`;
+    const days = Math.floor(hrs / 24);
+    if (days < 30) return `${days} day${days === 1 ? "" : "s"} ago`;
+    const months = Math.floor(days / 30);
+    return `${months} month${months === 1 ? "" : "s"} ago`;
+  }
 
   useEffect(() => {
     let mounted = true;
@@ -554,7 +591,8 @@ export default function DashboardPage() {
       matched_jobs: "results",
       bookmarks: "bookmarks",
       auto_apply: "automation",
-      analytics: "analytics-metrics"
+      analytics: "analytics-metrics",
+      tracker: "analytics-metrics"
     };
     const element = document.getElementById(targetMap[activeStep]);
     if (element) {
@@ -1575,16 +1613,22 @@ export default function DashboardPage() {
 
   return (
     <main className="app-shell">
-      <aside className="dashboard-sidebar">
+      <aside className="dashboard-sidebar tsenta-sidebar">
         <div className="sidebar-brand">
-          <p className="brand">AIapply.ai</p>
+          <span className="sidebar-logo-mark">A</span>
+          <span className="sidebar-logo-word">AIapply.ai</span>
         </div>
 
+        <p className="sidebar-section-label">Dashboard</p>
         <nav className="sidebar-nav" aria-label="Dashboard sections">
-          <button type="button" className={`sidebar-link${activeStep === "dashboard" ? " active" : ""}`} onClick={() => setActiveStep("dashboard")}>Dashboard</button>
-          <button type="button" className={`sidebar-link${activeStep === "matched_jobs" ? " active" : ""}`} onClick={() => setActiveStep("matched_jobs")}>Browse jobs</button>
+          <button type="button" className={`sidebar-link${activeStep === "dashboard" ? " active" : ""}`} onClick={() => setActiveStep("dashboard")}>
+            <span className="nav-ico">▦</span><span className="nav-text">Dashboard</span>
+          </button>
+          <button type="button" className={`sidebar-link${activeStep === "matched_jobs" ? " active" : ""}`} onClick={() => setActiveStep("matched_jobs")}>
+            <span className="nav-ico">⌕</span><span className="nav-text">Browse jobs</span>
+          </button>
           <button type="button" className={`sidebar-link${activeStep === "analytics" ? " active" : ""}`} onClick={() => setActiveStep("analytics")}>
-            <span>Applications</span>
+            <span className="nav-ico">▤</span><span className="nav-text">Applications</span>
             {applicationsCount > 0 && <span className="nav-badge">{applicationsCount}</span>}
           </button>
           <button
@@ -1595,31 +1639,40 @@ export default function DashboardPage() {
               setActiveStep("dashboard");
             }}
           >
-            <span>Inbox</span>
+            <span className="nav-ico">✉</span><span className="nav-text">Inbox</span>
             {needsYouCount > 0 && <span className="nav-badge">{needsYouCount}</span>}
           </button>
-          <button type="button" className={`sidebar-link${activeStep === "analytics" ? " active" : ""}`} onClick={() => setActiveStep("analytics")}>Tracker</button>
-          <button type="button" className={`sidebar-link${activeStep === "profile" ? " active" : ""}`} onClick={() => setActiveStep("profile")}>Profile</button>
-          <button type="button" className={`sidebar-link${activeStep === "auto_apply" ? " active" : ""}`} onClick={() => setActiveStep("auto_apply")}>Settings</button>
-          <button type="button" className={`sidebar-link${activeStep === "bookmarks" ? " active" : ""}`} onClick={() => setActiveStep("bookmarks")}>Bookmarks</button>
+          <button type="button" className={`sidebar-link${activeStep === "tracker" ? " active" : ""}`} onClick={() => setActiveStep("tracker")}>
+            <span className="nav-ico">▤</span><span className="nav-text">Tracker</span>
+          </button>
         </nav>
 
-        <div className="sidebar-plan-card">
-          <span className={`plan-pill ${subscription.plan}`}>{subscription.label}</span>
-          <h3>{fullName || userEmail}</h3>
-          <p>
-            {subscription.applications_monthly_limit
-              ? `${subscription.applications_used_this_month ?? 0}/${subscription.applications_monthly_limit} applications this month`
-              : assistantUsageLabel}
-          </p>
-          {subscription.plan === "basic" && (
-            <button type="button" onClick={() => void startCheckout()}>Upgrade plan</button>
-          )}
-        </div>
+        <div className="sidebar-divider" />
+        <nav className="sidebar-nav" aria-label="Account">
+          <button type="button" className={`sidebar-link${activeStep === "profile" ? " active" : ""}`} onClick={() => setActiveStep("profile")}>
+            <span className="nav-ico">◔</span><span className="nav-text">Profile</span>
+          </button>
+          <button type="button" className={`sidebar-link${activeStep === "auto_apply" ? " active" : ""}`} onClick={() => setActiveStep("auto_apply")}>
+            <span className="nav-ico">⚙</span><span className="nav-text">Settings</span>
+          </button>
+        </nav>
 
-        <button onClick={signOut} className="ghost sidebar-signout">
-          Sign Out
-        </button>
+        <div className="sidebar-foot">
+          <button type="button" className="help-box" onClick={() => setAssistantOpen(true)}>
+            <span className="help-ico">?</span>
+            <span>
+              <strong>Help &amp; support</strong>
+              <span className="help-sub">Ask the assistant</span>
+            </span>
+          </button>
+          <button type="button" className="user-card" onClick={signOut} title="Click to sign out">
+            <span className="user-avatar">{(fullName || userEmail || "U").slice(0, 2).toUpperCase()}</span>
+            <span className="user-meta">
+              <strong>{fullName || userEmail || "Your account"}</strong>
+              <span className="user-sub">{subscription.label} plan</span>
+            </span>
+          </button>
+        </div>
       </aside>
 
       <section className="dashboard-main">
@@ -1631,11 +1684,13 @@ export default function DashboardPage() {
                 ? "Browse jobs"
                 : activeStep === "analytics"
                   ? "Applications"
-                  : activeStep === "profile"
-                    ? "Profile"
-                    : activeStep === "auto_apply"
-                      ? "Settings"
-                      : "Bookmarks"}
+                  : activeStep === "tracker"
+                    ? "Tracker"
+                    : activeStep === "profile"
+                      ? "Profile"
+                      : activeStep === "auto_apply"
+                        ? "Settings"
+                        : "Bookmarks"}
           </h2>
           {(activeStep === "dashboard" || activeStep === "matched_jobs") ? (
             <input
@@ -1723,7 +1778,7 @@ export default function DashboardPage() {
           <div className="card-header-row applications-head">
             <h3>All applications</h3>
             <div className="inline-actions">
-              <button type="button" className="ghost" onClick={() => setActiveStep("analytics")}>Open Tracker</button>
+              <button type="button" className="ghost" onClick={() => setActiveStep("tracker")}>Open Tracker</button>
               <button type="button" onClick={() => void submitAllQueued()} disabled={submittingAll}>
                 {submittingAll ? "Submitting…" : "Submit all"}
               </button>
@@ -1734,8 +1789,8 @@ export default function DashboardPage() {
               ["all", "All"],
               ["in_flight", "In flight"],
               ["needs_you", "Needs you"],
-              ["rejected", "Rejected"],
-              ["withdrawn", "Withdrawn"]
+              ["rejected", "Failed"],
+              ["withdrawn", "Skipped"]
             ] as const).map(([key, label]) => (
               <button
                 key={key}
@@ -1764,39 +1819,37 @@ export default function DashboardPage() {
                     <td colSpan={5} className="empty-state">No applications in this view yet.</td>
                   </tr>
                 ) : (
-                  filteredApplications.map((app) => (
-                    <tr key={app.id}>
-                      <td>
-                        <strong>{app.company || "Unknown company"}</strong>
-                        <span className="app-role">{app.title || "Untitled role"}</span>
-                      </td>
-                      <td>{tailoredFor(app, "resume")}</td>
-                      <td>{tailoredFor(app, "cover_letter")}</td>
-                      <td>
-                        <select
-                          className="status-select"
-                          value={app.status}
-                          onChange={(e) => void updateApplicationStatus(app.id, e.target.value)}
-                        >
-                          {["approval_required", "queued_auto_apply", "viewed", "applied", "replied", "interviewing", "rejected", "withdrawn"].map((s) => (
-                            <option key={s} value={s}>{s.replace(/_/g, " ")}</option>
-                          ))}
-                        </select>
-                      </td>
-                      <td className="app-applied">
-                        {app.created_at ? new Date(app.created_at).toLocaleDateString() : "—"}
-                        {app.job_url && (
-                          <button
-                            type="button"
-                            className="ghost app-open"
-                            onClick={() => window.open(normalizeBookmarkWebsite(app.job_url), "_blank", "noopener,noreferrer")}
-                          >
-                            Open
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))
+                  filteredApplications.map((app) => {
+                    const meta = statusMeta(app.status);
+                    return (
+                      <tr
+                        key={app.id}
+                        className="app-row"
+                        onClick={() =>
+                          app.job_url && window.open(normalizeBookmarkWebsite(app.job_url), "_blank", "noopener,noreferrer")
+                        }
+                      >
+                        <td>
+                          <div className="app-position">
+                            <span className="app-avatar">{(app.company || "?").slice(0, 1).toUpperCase()}</span>
+                            <span>
+                              <strong>{app.company || "Unknown company"}</strong>
+                              <span className="app-role">{app.title || "Untitled role"}</span>
+                            </span>
+                          </div>
+                        </td>
+                        <td className="app-doc">{tailoredFor(app, "resume")}</td>
+                        <td className="app-doc">{tailoredFor(app, "cover_letter")}</td>
+                        <td>
+                          <span className={`status-dot-label tone-${meta.tone}`}>
+                            <span className="status-dot" />
+                            {meta.label}
+                          </span>
+                        </td>
+                        <td className="app-applied">{relativeTime(app.created_at)}</td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>
@@ -2631,7 +2684,7 @@ export default function DashboardPage() {
 
           <article
             className="dashboard-card dashboard-card-wide"
-            style={activeStep === "analytics" ? undefined : { display: "none" }}
+            style={activeStep === "analytics" || activeStep === "tracker" ? undefined : { display: "none" }}
           >
             <div className="card-header-row">
               <div>

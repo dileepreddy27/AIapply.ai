@@ -35,7 +35,13 @@ from .plans import (
 )
 from .rag import MatchResult, recommend_jobs_rag, role_suggestions
 from .role_catalog import get_roles_for_sector
-from .scanners import scan_ashby, scan_greenhouse, scan_lever
+from .scanners import (
+    scan_ashby,
+    scan_greenhouse,
+    scan_lever,
+    scan_recruitee,
+    scan_smartrecruiters,
+)
 from .storage import load_jobs
 from .tailoring import TAILOR_MODES, run_tailoring
 
@@ -94,6 +100,10 @@ DEFAULT_ASHBY_ORGS = [
     "clipboardhealth",
     "vanta",
 ]
+# Additional ATS sources (public APIs). Empty by default — configure per org via
+# LIVE_SMARTRECRUITERS_COMPANIES / LIVE_RECRUITEE_COMPANIES env vars.
+DEFAULT_SMARTRECRUITERS_COMPANIES: list[str] = []
+DEFAULT_RECRUITEE_COMPANIES: list[str] = []
 
 
 def _cors_origins() -> list[str]:
@@ -273,6 +283,24 @@ def _discover_live_jobs_with_diagnostics(
             if len(diagnostics["source_errors"]) < 8:
                 diagnostics["source_errors"].append(f"ashby:{org}:{exc}")
             continue
+
+    for source_name, env_name, defaults, scanner in (
+        ("smartrecruiters", "LIVE_SMARTRECRUITERS_COMPANIES", DEFAULT_SMARTRECRUITERS_COMPANIES, scan_smartrecruiters),
+        ("recruitee", "LIVE_RECRUITEE_COMPANIES", DEFAULT_RECRUITEE_COMPANIES, scan_recruitee),
+    ):
+        for token in _split_env_list(env_name, defaults):
+            diagnostics["sources_checked"] += 1
+            try:
+                scanned = scanner(token)
+                jobs.extend(scanned)
+                diagnostics["sources_succeeded"] += 1
+                diagnostics["source_counts"].append(
+                    {"source": source_name, "token": token, "jobs": len(scanned)}
+                )
+            except Exception as exc:
+                if len(diagnostics["source_errors"]) < 8:
+                    diagnostics["source_errors"].append(f"{source_name}:{token}:{exc}")
+                continue
 
     jobs = _dedupe_jobs(jobs)
     matched = [j for j in jobs if _text_matches_query(j, query)]
