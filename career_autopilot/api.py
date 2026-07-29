@@ -279,6 +279,36 @@ def _cached_aggregator_scan(cache_key: str, runner: Any) -> list[JobPosting]:
     return result
 
 
+# Per-user sliding-window rate limit for the discovery endpoints. Job discovery fans
+# out to billable aggregator APIs (JSearch/SerpApi), so an authenticated user must not
+# be able to hammer it. In-process only (per worker) — front with Redis for multi-node.
+_DISCOVERY_HITS: dict[str, list[float]] = {}
+
+
+def _enforce_discovery_rate_limit(user_id: str) -> None:
+    try:
+        limit = int(os.getenv("DISCOVERY_RATE_LIMIT", "20"))
+    except ValueError:
+        limit = 20
+    try:
+        window = float(os.getenv("DISCOVERY_RATE_WINDOW", "60"))
+    except ValueError:
+        window = 60.0
+    if limit <= 0 or window <= 0 or not user_id:
+        return
+    now = time.monotonic()
+    hits = [t for t in _DISCOVERY_HITS.get(user_id, []) if now - t < window]
+    if len(hits) >= limit:
+        retry_after = max(1, int(window - (now - hits[0])))
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many match requests. Try again in {retry_after}s.",
+            headers={"Retry-After": str(retry_after)},
+        )
+    hits.append(now)
+    _DISCOVERY_HITS[user_id] = hits
+
+
 def _discover_live_jobs_with_diagnostics(
     query: str,
     limit: int = 600,
@@ -1855,6 +1885,7 @@ def get_job_matches(
     """
     user = _current_user(authorization)
     user_id = _user_id_from_user(user)
+    _enforce_discovery_rate_limit(user_id)
     sb = _supabase()
     profile = _fetch_profile_row(sb, user_id)
     role_query = q.strip() or str((profile or {}).get("target_role", "") or "").strip()
@@ -2051,6 +2082,7 @@ async def rag_match(
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
     user = _current_user(authorization)
+    _enforce_discovery_rate_limit(_user_id_from_user(user))
     payload = await resume_file.read()
     try:
         resume_text = _extract_resume_text(resume_file.filename or "", payload).strip()

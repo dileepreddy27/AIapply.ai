@@ -157,6 +157,32 @@ def test_aggregator_cache_does_not_store_on_error(monkeypatch):
     assert "k" not in api._AGG_CACHE
 
 
+def test_discovery_rate_limit_blocks_after_threshold(monkeypatch):
+    import pytest
+    from fastapi import HTTPException
+
+    monkeypatch.setenv("DISCOVERY_RATE_LIMIT", "3")
+    monkeypatch.setenv("DISCOVERY_RATE_WINDOW", "60")
+    api._DISCOVERY_HITS.clear()
+    uid = "user-123"
+    for _ in range(3):
+        api._enforce_discovery_rate_limit(uid)  # first 3 allowed
+    with pytest.raises(HTTPException) as exc:
+        api._enforce_discovery_rate_limit(uid)  # 4th blocked
+    assert exc.value.status_code == 429
+    # A different user is unaffected by another user's budget.
+    api._enforce_discovery_rate_limit("other-user")
+    api._DISCOVERY_HITS.clear()
+
+
+def test_discovery_rate_limit_disabled_when_zero(monkeypatch):
+    monkeypatch.setenv("DISCOVERY_RATE_LIMIT", "0")
+    api._DISCOVERY_HITS.clear()
+    for _ in range(50):
+        api._enforce_discovery_rate_limit("u")  # never raises when disabled
+    api._DISCOVERY_HITS.clear()
+
+
 def test_allowed_statuses_include_pipeline_stages():
     for s in ("viewed", "applied", "replied", "interviewing", "withdrawn"):
         assert s in api.ALLOWED_APPLICATION_STATUSES
