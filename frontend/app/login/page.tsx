@@ -46,6 +46,25 @@ export default function LoginPage() {
     [mode]
   );
 
+  async function signInWithGoogle() {
+    setMessage("");
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: { redirectTo: `${resolveSiteUrl()}/dashboard` }
+      });
+      if (error) throw error;
+      // Supabase redirects the browser to Google on success.
+    } catch (err) {
+      const text = err instanceof Error ? err.message : "Google sign-in failed.";
+      setMessage(
+        /provider is not enabled|unsupported provider/i.test(text)
+          ? "Google sign-in isn't enabled yet. Enable the Google provider in Supabase Auth, or continue with email below."
+          : text
+      );
+    }
+  }
+
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setLoading(true);
@@ -131,85 +150,112 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="auth-shell mono">
-      <section className="auth-card">
-        <Link href="/" className="brand brand-link">
-          AIapply.ai
-        </Link>
-        <h1>{title}</h1>
-        <p className="subtitle">
-          Resume-aware job matching, tailoring, and consent-first auto-apply.
-        </p>
-
-        <div className="switch-row">
-          <button
-            className={mode === "signin" ? "switch active" : "switch"}
-            type="button"
-            onClick={() => setMode("signin")}
-          >
-            Sign In
-          </button>
-          <button
-            className={mode === "signup" ? "switch active" : "switch"}
-            type="button"
-            onClick={() => setMode("signup")}
-          >
-            Create Account
-          </button>
+    <main className="auth-split">
+      {/* Left: editorial */}
+      <section className="auth-left">
+        <Link href="/" className="lp-logo auth-left-brand">AIapply.ai</Link>
+        <div className="auth-left-body">
+          <p className="lp-eyebrow">Made for job seekers</p>
+          <h1>Be first to every job that fits you.</h1>
+          <p className="auth-left-sub">
+            Match, tailor, and apply — with every change shown to you first. Three things,
+            done well:
+          </p>
+          <ul className="auth-bullets">
+            <li>Match you with roles from Greenhouse, Lever, and Ashby</li>
+            <li>Tailor your resume and cover letter to each role</li>
+            <li>Queue and apply with consent-first automation</li>
+          </ul>
         </div>
+      </section>
 
-        <form onSubmit={onSubmit} className="auth-form">
-          {mode === "signup" && (
+      {/* Right: auth panel */}
+      <section className="auth-right">
+        <div className="auth-panel">
+          <h2>{mode === "signin" ? "Welcome back" : "Create your account"}</h2>
+          <p className="auth-panel-sub">Start free — no card required.</p>
+
+          <button type="button" className="oauth-btn" onClick={signInWithGoogle}>
+            <span className="oauth-g" aria-hidden="true">G</span>
+            Continue with Google
+          </button>
+
+          <div className="auth-divider"><span>Or continue with email</span></div>
+
+          <div className="switch-row">
+            <button
+              className={mode === "signin" ? "switch active" : "switch"}
+              type="button"
+              onClick={() => setMode("signin")}
+            >
+              Sign In
+            </button>
+            <button
+              className={mode === "signup" ? "switch active" : "switch"}
+              type="button"
+              onClick={() => setMode("signup")}
+            >
+              Create Account
+            </button>
+          </div>
+
+          <form onSubmit={onSubmit} className="auth-form">
+            {mode === "signup" && (
+              <label>
+                Full Name
+                <input
+                  type="text"
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  required
+                />
+              </label>
+            )}
             <label>
-              Full Name
+              Email address
               <input
-                type="text"
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
+                type="email"
+                placeholder="you@example.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
                 required
               />
             </label>
+            <label>
+              Password
+              <input
+                type="password"
+                minLength={8}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
+            </label>
+            <button type="submit" className="auth-primary" disabled={loading}>
+              {loading ? "Please wait..." : mode === "signin" ? "Continue" : "Create account"}
+            </button>
+          </form>
+
+          {message && <p className="status">{message}</p>}
+
+          {awaitingConfirmation && (
+            <button
+              type="button"
+              className="switch resend"
+              onClick={resendConfirmation}
+              disabled={loading}
+            >
+              {loading ? "Please wait..." : "Resend verification email"}
+            </button>
           )}
-          <label>
-            Email
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-            />
-          </label>
-          <label>
-            Password
-            <input
-              type="password"
-              minLength={8}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-            />
-          </label>
-          <button type="submit" disabled={loading}>
-            {loading ? "Please wait..." : mode === "signin" ? "Sign In" : "Create Account"}
-          </button>
-        </form>
 
-        {message && <p className="status">{message}</p>}
-
-        {awaitingConfirmation && (
-          <button
-            type="button"
-            className="switch"
-            onClick={resendConfirmation}
-            disabled={loading}
-          >
-            {loading ? "Please wait..." : "Resend verification email"}
-          </button>
-        )}
-
-        <p className="auth-foot">
-          <Link href="/">← Back to home</Link>
-        </p>
+          <p className="auth-fineprint">
+            By continuing you agree to our Terms of Service and Privacy Policy.
+          </p>
+          <p className="auth-foot">
+            <Link href="/">← Back to home</Link>
+          </p>
+        </div>
       </section>
     </main>
   );
