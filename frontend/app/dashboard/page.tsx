@@ -236,6 +236,7 @@ export default function DashboardPage() {
   const priceId = cleanPriceId(rawPriceId);
 
   const [userEmail, setUserEmail] = useState("");
+  const [avatarUrl, setAvatarUrl] = useState("");
   const [token, setToken] = useState("");
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
@@ -383,17 +384,18 @@ export default function DashboardPage() {
     [applications]
   );
   const profileCompletion = useMemo(() => {
+    // Resume-first: only count fields that this flow actually populates (resume upload
+    // + target role + resume-extracted details + screening answer). The old formula
+    // still counted fields removed from the UI (sector, work prefs, salary…) that can
+    // never be filled, which capped completion artificially low.
     const checks = [
+      resumeStoragePath,
       fullName,
       targetRole,
       experienceLevel,
       skillsText,
-      targetSector,
-      country,
-      preferredLocations,
-      workPreferences,
+      location || preferredLocations,
       workAuthorizationStatus,
-      salaryExpectation,
       applicationSummary,
       linkedinUrl || portfolioUrl
     ];
@@ -401,18 +403,16 @@ export default function DashboardPage() {
     return Math.round((filled / checks.length) * 100);
   }, [
     applicationSummary,
-    country,
     experienceLevel,
     fullName,
     linkedinUrl,
+    location,
     portfolioUrl,
     preferredLocations,
-    salaryExpectation,
+    resumeStoragePath,
     skillsText,
     targetRole,
-    targetSector,
-    workAuthorizationStatus,
-    workPreferences
+    workAuthorizationStatus
   ]);
   const assistantUsageLabel = testingPremiumMode
     ? "Premium features enabled for testing"
@@ -421,6 +421,14 @@ export default function DashboardPage() {
       : `${subscription.assistant_prompts_remaining ?? 0} prompts left`;
 
   const canRunMatch = useMemo(() => !!token && !!resumeFile, [token, resumeFile]);
+
+  // Avatar fallback when there's no OAuth profile picture: first letter of the
+  // first name, else the first letter of the email.
+  const avatarInitial = (
+    (fullName || "").trim().split(/\s+/)[0]?.charAt(0) ||
+    (userEmail || "").trim().charAt(0) ||
+    "?"
+  ).toUpperCase();
 
   const applicationAnswers = useMemo(() => {
     const answers: { question: string; answer: string }[] = [];
@@ -530,6 +538,9 @@ export default function DashboardPage() {
       if (!mounted) return;
       setToken(session.access_token);
       setUserEmail(session.user.email ?? "");
+      // OAuth providers (Google, etc.) put a profile picture in user_metadata.
+      const meta = (session.user.user_metadata ?? {}) as Record<string, unknown>;
+      setAvatarUrl(String(meta.avatar_url || meta.picture || ""));
       setLoading(false);
       await Promise.all([
         loadSubscription(session.access_token),
@@ -811,6 +822,34 @@ export default function DashboardPage() {
     }
   }
 
+  async function loadBrowseJobs(): Promise<void> {
+    // Populate the Browse tab from the saved-profile match feed so the tab — and its
+    // search box — has data even before the user runs a resume-based match.
+    if (!isBackendConfigured() || !token) return;
+    setMatchesLoading(true);
+    try {
+      const q = targetRole.trim();
+      const res = await fetch(
+        `${backendUrl}/api/jobs/matches?limit=48${q ? `&q=${encodeURIComponent(q)}` : ""}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      const data = await res.json();
+      const rows = (Array.isArray(data?.results) ? data.results : []) as MatchResult[];
+      setResults(rows);
+      setMatches(rows);
+      setDiscoveryDiagnostics(data?.source_diagnostics ?? null);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setMatchesLoading(false);
+    }
+  }
+
+  function openBrowseJobs(): void {
+    setActiveStep("matched_jobs");
+    if (!results.length) void loadBrowseJobs();
+  }
+
   async function applyToJob(job: MatchResult): Promise<void> {
     // Always open the posting so the action does something even if queuing is gated.
     if (typeof window !== "undefined" && job.url) {
@@ -900,6 +939,9 @@ export default function DashboardPage() {
   }
 
   async function uploadResumeToStorage(file: File): Promise<void> {
+    // Capture the file for "Match Jobs" (canRunMatch) no matter which upload input
+    // was used, so uploading never leaves Match disabled.
+    setResumeFile(file);
     if (!isBackendConfigured()) {
       setMessage(backendConfigMessage());
       return;
@@ -1382,7 +1424,11 @@ export default function DashboardPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.detail ?? "Match request failed.");
-      setResults(data.results ?? []);
+      const matchResults = (data.results ?? []) as MatchResult[];
+      setResults(matchResults);
+      // Keep the dashboard-home "Top job matches" feed in sync (it renders `matches`,
+      // which is otherwise only loaded once on mount and would stay stale/empty).
+      setMatches(matchResults);
       setDiscoveryDiagnostics(data.source_diagnostics ?? null);
       setPostedWindow("all");
       setSourceFilter("all");
@@ -1586,7 +1632,7 @@ export default function DashboardPage() {
           <button type="button" className={`sidebar-link${activeStep === "dashboard" ? " active" : ""}`} onClick={() => setActiveStep("dashboard")}>
             <span className="nav-ico">▦</span><span className="nav-text">Dashboard</span>
           </button>
-          <button type="button" className={`sidebar-link${activeStep === "matched_jobs" ? " active" : ""}`} onClick={() => setActiveStep("matched_jobs")}>
+          <button type="button" className={`sidebar-link${activeStep === "matched_jobs" ? " active" : ""}`} onClick={openBrowseJobs}>
             <span className="nav-ico">⌕</span><span className="nav-text">Browse jobs</span>
           </button>
           <button type="button" className={`sidebar-link${activeStep === "analytics" ? " active" : ""}`} onClick={() => setActiveStep("analytics")}>
@@ -1628,7 +1674,14 @@ export default function DashboardPage() {
             </span>
           </button>
           <button type="button" className="user-card" onClick={signOut} title="Click to sign out">
-            <span className="user-avatar">{(fullName || userEmail || "U").slice(0, 2).toUpperCase()}</span>
+            <span className="user-avatar">
+              {avatarUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={avatarUrl} alt="" referrerPolicy="no-referrer" />
+              ) : (
+                (fullName || userEmail || "U").slice(0, 2).toUpperCase()
+              )}
+            </span>
             <span className="user-meta">
               <strong>{fullName || userEmail || "Your account"}</strong>
               <span className="user-sub">{subscription.label} plan</span>
@@ -1680,12 +1733,17 @@ export default function DashboardPage() {
             </button>
             <button
               type="button"
-              className="icon-btn"
-              title="Help / assistant"
-              aria-label="Help"
-              onClick={() => setAssistantOpen(true)}
+              className="topbar-avatar"
+              title={userEmail || "Your profile"}
+              aria-label="Your profile"
+              onClick={() => setActiveStep("profile")}
             >
-              ?
+              {avatarUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={avatarUrl} alt="" referrerPolicy="no-referrer" />
+              ) : (
+                <span>{avatarInitial}</span>
+              )}
             </button>
           </div>
         </header>
@@ -1700,7 +1758,7 @@ export default function DashboardPage() {
         >
           <div className="card-header-row">
             <h3>Top job matches</h3>
-            <button type="button" className="ghost" onClick={() => setActiveStep("matched_jobs")}>
+            <button type="button" className="ghost" onClick={openBrowseJobs}>
               Browse Jobs ›
             </button>
           </div>
