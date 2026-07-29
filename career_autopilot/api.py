@@ -35,6 +35,7 @@ from .plans import (
 )
 from .rag import MatchResult, recommend_jobs_rag, role_suggestions
 from .role_catalog import get_roles_for_sector
+from .aggregators import scan_jsearch, scan_rss, scan_serpapi_google_jobs
 from .scanners import (
     scan_ashby,
     scan_greenhouse,
@@ -191,13 +192,33 @@ def _text_matches_query(job: JobPosting, query: str) -> bool:
 
 
 def _dedupe_jobs(jobs: list[JobPosting]) -> list[JobPosting]:
+    # First collapse exact-URL duplicates.
     by_url: dict[str, JobPosting] = {}
     for job in jobs:
         if not job.url:
             continue
-        if job.url not in by_url:
-            by_url[job.url] = job
-    return list(by_url.values())
+        by_url.setdefault(job.url, job)
+
+    # Then collapse the SAME role posted across multiple platforms (LinkedIn,
+    # Indeed, Google Jobs, direct ATS…) by hashing company+title+location, keeping
+    # the most actionable listing (a direct/ATS apply with a description wins).
+    def _rank(job: JobPosting) -> int:
+        score = 0
+        if job.apply_type in {"external_ats", "direct"}:
+            score += 2
+        elif job.apply_type not in {"unknown", ""}:
+            score += 1
+        if job.description:
+            score += 1
+        return score
+
+    best: dict[str, JobPosting] = {}
+    for job in by_url.values():
+        key = re.sub(r"\s+", " ", f"{job.company}|{job.title}|{job.location}".lower()).strip()
+        current = best.get(key)
+        if current is None or _rank(job) > _rank(current):
+            best[key] = job
+    return list(best.values())
 
 
 def _discover_live_jobs_with_diagnostics(
@@ -301,6 +322,31 @@ def _discover_live_jobs_with_diagnostics(
                 if len(diagnostics["source_errors"]) < 8:
                     diagnostics["source_errors"].append(f"{source_name}:{token}:{exc}")
                 continue
+
+    # 3) Aggregator APIs (query-based) — cover LinkedIn/Indeed/Glassdoor/etc. and the
+    # wider web via legitimate middle-layer APIs. Each is skipped unless configured.
+    job_location = os.getenv("JOB_LOCATION", "").strip()
+    aggregator_sources = [
+        ("jsearch", lambda: scan_jsearch(query, location=job_location)),
+        ("google_jobs", lambda: scan_serpapi_google_jobs(query, location=job_location)),
+    ]
+    for feed in _split_env_list("LIVE_RSS_FEEDS", []):
+        aggregator_sources.append((f"rss:{feed[:40]}", (lambda f=feed: scan_rss(f))))
+    for source_name, runner in aggregator_sources:
+        try:
+            scanned = runner()
+        except Exception as exc:
+            if len(diagnostics["source_errors"]) < 8:
+                diagnostics["source_errors"].append(f"{source_name}:{exc}")
+            continue
+        if not scanned:
+            continue
+        diagnostics["sources_checked"] += 1
+        diagnostics["sources_succeeded"] += 1
+        jobs.extend(scanned)
+        diagnostics["source_counts"].append(
+            {"source": source_name.split(":")[0], "token": "aggregator", "jobs": len(scanned)}
+        )
 
     jobs = _dedupe_jobs(jobs)
     matched = [j for j in jobs if _text_matches_query(j, query)]
@@ -722,6 +768,7 @@ def _results_to_cards(results: list[MatchResult], min_score: float) -> list[dict
                 "location": result.job.location,
                 "url": result.job.url,
                 "source": result.job.source,
+                "apply_type": result.job.apply_type,
                 "rag_score": round(result.rag_score * 5.0, 2),
                 "final_score": round(result.final_score * 5.0, 2),
                 "ats_score": ats_score,

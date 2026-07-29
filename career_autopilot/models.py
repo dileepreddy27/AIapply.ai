@@ -19,6 +19,7 @@ class JobPosting:
     url: str
     description: str = ""
     posted_at: str = ""
+    apply_type: str = "unknown"
     discovered_at: str = field(default_factory=utc_now_iso)
     score: float | None = None
     score_reason: str = ""
@@ -38,6 +39,7 @@ class JobPosting:
             url=str(raw.get("url", "")),
             description=str(raw.get("description", "")),
             posted_at=str(raw.get("posted_at", "")),
+            apply_type=str(raw.get("apply_type", "unknown")),
             discovered_at=str(raw.get("discovered_at", utc_now_iso())),
             score=raw.get("score"),
             score_reason=str(raw.get("score_reason", "")),

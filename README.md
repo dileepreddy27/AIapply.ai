@@ -203,7 +203,10 @@ Open:
   - dynamic role suggestions from Google Form/Sheet CSV (if configured),
   - sector, country/region, and Fortune-ranking filters,
   - resume upload,
-  - role-based matching with live discovery across Greenhouse, Lever, and Ashby,
+  - role-based matching with live discovery across Greenhouse, Lever, Ashby,
+    SmartRecruiters, and Recruitee — plus optional aggregator APIs that pull
+    LinkedIn/Indeed/Glassdoor (JSearch) and the wider web (Google Jobs) and RSS
+    feeds, all deduped into one feed (see [docs/aggregators.md](docs/aggregators.md)),
   - a live "new matches" monitoring feed and opt-in email job alerts,
   - resume & cover-letter tailoring per job (keyword-aligned, factual, with a change list),
   - work-authorization filtering and auto-answers (OPT / STEM-OPT / H-1B / citizen),

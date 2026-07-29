@@ -70,6 +70,21 @@ def test_dedupe_jobs():
     assert len(out) == 1
 
 
+def test_dedupe_cross_platform_keeps_actionable():
+    # Same role on LinkedIn (aggregator) and on Greenhouse (external ATS) -> one wins.
+    linkedin = JobPosting(
+        id="l", source="linkedin", company="Acme", title="Engineer", location="NYC",
+        url="https://linkedin.com/jobs/1", description="", apply_type="linkedin_easy_apply",
+    )
+    ats = JobPosting(
+        id="g", source="greenhouse", company="Acme", title="Engineer", location="NYC",
+        url="https://boards.greenhouse.io/acme/1", description="Full JD", apply_type="external_ats",
+    )
+    out = api._dedupe_jobs([linkedin, ats])
+    assert len(out) == 1
+    assert out[0].apply_type == "external_ats"  # the more-actionable listing wins
+
+
 def test_allowed_statuses_include_pipeline_stages():
     for s in ("viewed", "applied", "replied", "interviewing", "withdrawn"):
         assert s in api.ALLOWED_APPLICATION_STATUSES

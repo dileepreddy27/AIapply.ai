@@ -10,6 +10,7 @@ type MatchResult = {
   location: string;
   url: string;
   source: string;
+  apply_type?: string;
   rag_score: number;
   final_score: number;
   ats_score: number;
