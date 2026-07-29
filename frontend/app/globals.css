@@ -1786,6 +1786,28 @@ button:disabled {
   border-radius: 50%;
   background: #ef4444;
 }
+.app-shell .topbar-avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 999px;
+  border: 1px solid #e5e5e5;
+  background: #0a0a0a;
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+  overflow: hidden;
+}
+.app-shell .topbar-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.user-avatar { overflow: hidden; }
+.user-avatar img { width: 100%; height: 100%; object-fit: cover; }
 
 /* Sidebar nav badges + specificity re-assert */
 .app-shell .sidebar-link {
