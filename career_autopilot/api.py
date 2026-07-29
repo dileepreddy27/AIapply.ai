@@ -35,6 +35,7 @@ from .plans import (
     resolve_plan_from_price_id,
 )
 from .rag import MatchResult, recommend_jobs_rag, role_suggestions
+from .resume_extractor import extract_profile_fields
 from .role_catalog import get_roles_for_sector
 from .aggregators import scan_jsearch, scan_rss, scan_serpapi_google_jobs
 from .scanners import (
@@ -2037,18 +2038,58 @@ async def upload_resume(
             ),
         )
 
-    # Persist the path onto the profile's application_profile (merge, don't clobber).
+    # Parse the resume into structured fields so it becomes the source of truth for
+    # candidate data (name, skills, links, summary, ...). LLM-first with a heuristic
+    # fallback; missing fields stay empty and never overwrite existing data with blanks.
+    extracted = extract_profile_fields(text, user_id)
+    applied: dict[str, Any] = {}
     try:
         profile = _fetch_profile_row(sb, user_id) or {}
         app_profile = dict(profile.get("application_profile") or {})
         app_profile["resume_storage_path"] = storage_path
         app_profile["resume_filename"] = filename
-        sb.table("profiles").upsert(
-            {"id": user_id, "email": user.get("email", ""), "application_profile": app_profile}
-        ).execute()
+        # Merge resume-derived jsonb fields, overwriting only when the resume had a value.
+        for key in ("phone", "location", "linkedin_url", "portfolio_url", "github_url", "summary"):
+            value = extracted.get(key)
+            if value:
+                app_profile[key] = value
+                applied[key] = value
+
+        payload: dict[str, Any] = {
+            "id": user_id,
+            "email": user.get("email", ""),
+            "application_profile": app_profile,
+        }
+        # Top-level columns — overwrite only when the resume provided a value. We never
+        # touch target_role (user-controlled) or the work-auth/screening answers.
+        if extracted.get("full_name"):
+            payload["full_name"] = extracted["full_name"]
+            applied["full_name"] = extracted["full_name"]
+        if extracted.get("experience_level"):
+            payload["experience_level"] = extracted["experience_level"]
+            applied["experience_level"] = extracted["experience_level"]
+        if extracted.get("skills"):
+            payload["skills"] = extracted["skills"]
+            applied["skills"] = extracted["skills"]
+
+        try:
+            sb.table("profiles").upsert(payload).execute()
+        except Exception as exc:
+            # Backward compat: retry without the jsonb column if the schema predates it.
+            if "application_profile" in str(exc).lower():
+                legacy = dict(payload)
+                legacy.pop("application_profile", None)
+                sb.table("profiles").upsert(legacy).execute()
+            else:
+                raise
     except Exception:
         pass
-    return {"ok": True, "resume_storage_path": storage_path, "resume_filename": filename}
+    return {
+        "ok": True,
+        "resume_storage_path": storage_path,
+        "resume_filename": filename,
+        "extracted": applied,
+    }
 
 
 def _download_resume_to_temp(sb: Client, storage_path: str) -> str | None:

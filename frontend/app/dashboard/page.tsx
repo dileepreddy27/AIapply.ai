@@ -916,7 +916,20 @@ export default function DashboardPage() {
       if (!res.ok) throw new Error(data?.detail ?? "Resume upload failed.");
       setResumeStoragePath(data.resume_storage_path ?? "");
       setResumeStorageFilename(data.resume_filename ?? "");
-      setMessage(`Resume saved for auto-submit: ${data.resume_filename ?? ""}`);
+      // Reload the profile so resume-extracted fields (name, skills, links, …) hydrate.
+      if (token) await loadProfile(token);
+      const extracted = (data.extracted ?? {}) as Record<string, unknown>;
+      const extractedFields = Object.keys(extracted);
+      if (extractedFields.length) {
+        const skillCount = Array.isArray(extracted.skills) ? extracted.skills.length : 0;
+        const labels = extractedFields
+          .filter((k) => k !== "skills")
+          .map((k) => k.replace(/_/g, " "));
+        if (skillCount) labels.push(`${skillCount} skills`);
+        setMessage(`Resume saved — extracted ${labels.join(", ")}.`);
+      } else {
+        setMessage(`Resume saved for auto-submit: ${data.resume_filename ?? ""}`);
+      }
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Resume upload failed.");
     }
@@ -1893,9 +1906,21 @@ export default function DashboardPage() {
                 <input
                   type="file"
                   accept=".pdf,.docx,.txt,.md"
-                  onChange={(e) => setResumeFile(e.target.files?.[0] ?? null)}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0] ?? null;
+                    setResumeFile(file);
+                    // One upload does it all: store for auto-submit AND extract
+                    // name/skills/links/summary into the profile.
+                    if (file) void uploadResumeToStorage(file);
+                  }}
                 />
-                <span className="field-hint">{resumeFile ? resumeFile.name : "No file selected yet."}</span>
+                <span className="field-hint">
+                  {resumeStorageFilename
+                    ? `Stored: ${resumeStorageFilename} — we extract your details automatically.`
+                    : resumeFile
+                      ? resumeFile.name
+                      : "Upload your resume — we extract your name, skills, links, and summary."}
+                </span>
               </label>
             </div>
           </article>
