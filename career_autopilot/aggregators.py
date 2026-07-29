@@ -13,6 +13,8 @@ Sources (all optional; a source is skipped unless its key/feed is configured):
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import xml.etree.ElementTree as ET
 from typing import Any
@@ -54,6 +56,96 @@ def classify_apply_type(url: str, is_direct: bool | None = None) -> str:
     if is_direct:
         return "direct"
     return "unknown"
+
+
+def queue_hash(company: str, title: str, location: str) -> str:
+    """Deterministic id used to dedupe the same role across platforms."""
+    raw = f"{str(company).lower().strip()}_{str(title).lower().strip()}_{str(location).lower().strip()}"
+    return hashlib.md5(raw.encode("utf-8")).hexdigest()
+
+
+def classify_application_route(url: str) -> str:
+    """Routing taxonomy the applier worker uses to pick an adapter."""
+    link = (url or "").lower()
+    if not link:
+        return "UNKNOWN"
+    if "lever.co" in link:
+        return "ATS_LEVER_API"
+    if "greenhouse.io" in link:
+        return "ATS_GREENHOUSE_API"
+    if "ashbyhq.com" in link:
+        return "ATS_ASHBY"
+    if "smartrecruiters.com" in link:
+        return "ATS_SMARTRECRUITERS"
+    if "recruitee.com" in link:
+        return "ATS_RECRUITEE"
+    if "workday" in link:
+        return "BROWSER_WORKDAY_FLOW"
+    if "linkedin.com" in link:
+        return "LINKEDIN_EASY_APPLY"
+    if "indeed.com" in link:
+        return "INDEED"
+    return "GENERIC_WEB_FORM"
+
+
+def fetch_applier_queue(
+    query: str, pages: int = 1, date_posted: str = "all", location: str = ""
+) -> list[dict[str, Any]]:
+    """Query JSearch across LinkedIn/Indeed/Glassdoor/etc. and map to the
+    auto-applier queue schema (deduped by company+title+location)."""
+    api_key = os.getenv("RAPIDAPI_KEY", "").strip()
+    if not api_key or not query.strip():
+        return []
+    host = os.getenv("RAPIDAPI_JSEARCH_HOST", "jsearch.p.rapidapi.com").strip()
+    q = f"{query.strip()} in {location.strip()}" if location.strip() else query.strip()
+    seen: set[str] = set()
+    out: list[dict[str, Any]] = []
+    for page in range(1, max(1, min(pages, 5)) + 1):
+        data = _get_json(
+            f"https://{host}/search",
+            headers={"X-RapidAPI-Key": api_key, "X-RapidAPI-Host": host},
+            params={"query": q, "page": str(page), "num_pages": "1", "date_posted": date_posted},
+        )
+        for job in (data.get("data", []) if isinstance(data, dict) else []):
+            if not isinstance(job, dict):
+                continue
+            company = str(job.get("employer_name", "") or "Unknown Company")
+            title = str(job.get("job_title", "") or "Unknown Title")
+            location_str = ", ".join(
+                p for p in (str(job.get("job_city", "") or ""), str(job.get("job_state", "") or "")) if p
+            ) or ("Remote" if job.get("job_is_remote") else "Unknown Location")
+            jid = queue_hash(company, title, location_str)
+            if jid in seen:
+                continue
+            seen.add(jid)
+            apply_link = str(job.get("job_apply_link", "") or "")
+            out.append(
+                {
+                    "job_id": jid,
+                    "title": title,
+                    "company": company,
+                    "location": location_str,
+                    "platform_source": str(job.get("job_publisher", "") or "Direct Search"),
+                    "apply_url": apply_link,
+                    "application_type": classify_application_route(apply_link),
+                    "description": str(job.get("job_description", "") or ""),
+                    "salary_min": job.get("job_min_salary"),
+                    "salary_max": job.get("job_max_salary"),
+                    "is_remote": bool(job.get("job_is_remote", False)),
+                    "posted_at": str(job.get("job_posted_at_datetime_utc", "") or ""),
+                }
+            )
+    return out
+
+
+def export_applier_queue(
+    query: str, out_path: str = "applier_queue.json", pages: int = 1, location: str = ""
+) -> int:
+    """Write the unified applier queue to JSON. Returns the row count."""
+    items = fetch_applier_queue(query, pages=pages, location=location)
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(items, f, indent=2)
+    return len(items)
 
 
 def _job(

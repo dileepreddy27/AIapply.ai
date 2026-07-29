@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import json
+import os
 from pathlib import Path
 
 from .apply_bot import apply_with_review
@@ -83,6 +85,63 @@ def cmd_web(args: argparse.Namespace) -> None:
         port=args.port,
         reload=args.reload,
     )
+
+
+def cmd_export_queue(args: argparse.Namespace) -> None:
+    from .aggregators import export_applier_queue
+
+    if not os.getenv("RAPIDAPI_KEY", "").strip():
+        raise RuntimeError("Set RAPIDAPI_KEY (JSearch) to export the applier queue.")
+    count = export_applier_queue(
+        args.query, out_path=args.out, pages=args.pages, location=args.location
+    )
+    print(f"exported {count} jobs to {args.out}")
+
+
+def _applicant_from_args(args: argparse.Namespace) -> dict[str, str]:
+    if getattr(args, "profile", "") and Path(args.profile).exists():
+        prof = load_profile(Path(args.profile))
+        return {
+            "name": prof.name,
+            "email": prof.email,
+            "phone": prof.phone,
+            "location": prof.location,
+            "company": "",
+            "linkedin": prof.links.get("linkedin", ""),
+            "github": prof.links.get("github", ""),
+            "portfolio": prof.links.get("portfolio", ""),
+        }
+    return {
+        "name": os.getenv("APPLICANT_NAME", ""),
+        "email": os.getenv("APPLICANT_EMAIL", ""),
+        "phone": os.getenv("APPLICANT_PHONE", ""),
+        "location": os.getenv("APPLICANT_LOCATION", ""),
+        "company": "",
+        "linkedin": os.getenv("APPLICANT_LINKEDIN", ""),
+        "github": os.getenv("APPLICANT_GITHUB", ""),
+        "portfolio": os.getenv("APPLICANT_PORTFOLIO", ""),
+    }
+
+
+def cmd_apply_queue(args: argparse.Namespace) -> None:
+    from .applier import apply_from_queue
+
+    applicant = _applicant_from_args(args)
+    results = apply_from_queue(
+        queue_path=args.file,
+        applicant=applicant,
+        resume_path=args.resume or os.getenv("AUTO_APPLY_RESUME_PATH", "").strip() or None,
+        submit=args.submit,
+        headless=not args.headful,
+        limit=args.limit,
+    )
+    by_status: dict[str, int] = {}
+    for r in results:
+        by_status[r["status"]] = by_status.get(r["status"], 0) + 1
+    print(f"applier finished: {len(results)} jobs -> {by_status}")
+    if args.results:
+        Path(args.results).write_text(json.dumps(results, indent=2), encoding="utf-8")
+        print(f"wrote per-job results to {args.results}")
 
 
 def cmd_worker(args: argparse.Namespace) -> None:
@@ -175,6 +234,23 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_mcp = sub.add_parser("mcp", help="Run the MCP server (stdio) exposing job tools")
     p_mcp.set_defaults(func=cmd_mcp)
+
+    p_export = sub.add_parser("export-queue", help="Aggregate jobs (JSearch) into applier_queue.json")
+    p_export.add_argument("--query", required=True, help="e.g. 'Python Backend Developer'")
+    p_export.add_argument("--out", default="applier_queue.json")
+    p_export.add_argument("--pages", type=int, default=1)
+    p_export.add_argument("--location", default="")
+    p_export.set_defaults(func=cmd_export_queue)
+
+    p_apply = sub.add_parser("apply-queue", help="Playwright applier: fill/submit jobs from a queue JSON")
+    p_apply.add_argument("--file", default="applier_queue.json")
+    p_apply.add_argument("--profile", default="", help="Optional config/profile.yml for applicant details")
+    p_apply.add_argument("--resume", default="", help="Path to resume file to upload")
+    p_apply.add_argument("--submit", action="store_true", help="Actually submit (default dry-run: fill only)")
+    p_apply.add_argument("--headful", action="store_true", help="Show the browser (default headless)")
+    p_apply.add_argument("--limit", type=int, default=25)
+    p_apply.add_argument("--results", default="", help="Optional path to write per-job results JSON")
+    p_apply.set_defaults(func=cmd_apply_queue)
 
     return parser
 
