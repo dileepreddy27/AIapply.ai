@@ -445,7 +445,7 @@ export default function DashboardPage() {
       const { data } = await supabase.auth.getSession();
       const session = data.session;
       if (!session) {
-        router.push("/");
+        router.push("/login");
         return;
       }
       if (!mounted) return;
