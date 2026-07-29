@@ -191,7 +191,7 @@ type PersistProfileOptions = {
   successMessage?: string | null;
 };
 
-type DashboardStep = "profile" | "matched_jobs" | "bookmarks" | "auto_apply" | "analytics";
+type DashboardStep = "dashboard" | "profile" | "matched_jobs" | "bookmarks" | "auto_apply" | "analytics";
 
 function cleanPriceId(raw: string): string {
   return raw
@@ -314,7 +314,12 @@ export default function DashboardPage() {
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [assistantError, setAssistantError] = useState("");
   const [showApplications, setShowApplications] = useState(false);
-  const [activeStep, setActiveStep] = useState<DashboardStep>("profile");
+  const [activeStep, setActiveStep] = useState<DashboardStep>("dashboard");
+  const [matches, setMatches] = useState<MatchResult[]>([]);
+  const [matchesLoading, setMatchesLoading] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [appFilter, setAppFilter] = useState<"all" | "in_flight" | "needs_you" | "rejected" | "withdrawn">("all");
+  const [submittingAll, setSubmittingAll] = useState(false);
 
   const [resumeStoragePath, setResumeStoragePath] = useState("");
   const [resumeStorageFilename, setResumeStorageFilename] = useState("");
@@ -345,7 +350,9 @@ export default function DashboardPage() {
       .sort();
   }, [results]);
   const filteredResults = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
     return results.filter((item) => {
+      if (q && !`${item.title} ${item.company}`.toLowerCase().includes(q)) return false;
       if (sourceFilter !== "all" && item.source !== sourceFilter) return false;
       if (postedWindow === "24h") return item.posted_bucket === "past_24_hours";
       if (postedWindow === "7d") return item.posted_bucket === "past_24_hours" || item.posted_bucket === "past_week";
@@ -353,7 +360,7 @@ export default function DashboardPage() {
       if (postedWindow === "older") return item.posted_bucket === "older";
       return true;
     });
-  }, [postedWindow, results, sourceFilter]);
+  }, [postedWindow, results, sourceFilter, searchQuery]);
   const sourceMix = useMemo(() => {
     const counts = new Map<string, number>();
     results.forEach((item) => {
@@ -439,6 +446,40 @@ export default function DashboardPage() {
     return map;
   }, [applications]);
 
+  const IN_FLIGHT_STATUSES = ["queued_auto_apply", "viewed", "applied", "replied", "interviewing"];
+  const needsYouCount = useMemo(
+    () => applications.filter((a) => a.status === "approval_required").length,
+    [applications]
+  );
+  const topMatches = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    const list = q
+      ? matches.filter((m) => `${m.title} ${m.company}`.toLowerCase().includes(q))
+      : matches;
+    return list;
+  }, [matches, searchQuery]);
+  const filteredApplications = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return applications.filter((a) => {
+      if (q && !`${a.title} ${a.company}`.toLowerCase().includes(q)) return false;
+      if (appFilter === "all") return true;
+      if (appFilter === "in_flight") return IN_FLIGHT_STATUSES.includes(a.status);
+      if (appFilter === "needs_you") return a.status === "approval_required";
+      if (appFilter === "rejected") return a.status === "rejected";
+      if (appFilter === "withdrawn") return a.status === "withdrawn";
+      return true;
+    });
+  }, [applications, appFilter, searchQuery]);
+  function tailoredFor(app: ApplicationRecord, mode: "resume" | "cover_letter"): string {
+    const key = `${mode}::${(app.company || "").toLowerCase()}::${(app.title || "").toLowerCase()}`;
+    return tailoredDocuments.some((d) => d.id === key) ? "Ready" : mode === "resume" ? "Default" : "Off";
+  }
+  function ringColor(score: number): string {
+    if (score >= 80) return "#16a34a";
+    if (score >= 55) return "#ea580c";
+    return "#0a0a0a";
+  }
+
   useEffect(() => {
     let mounted = true;
     async function bootstrap() {
@@ -457,7 +498,8 @@ export default function DashboardPage() {
         loadProfileOptions(session.access_token),
         loadProfile(session.access_token),
         loadApplications(session.access_token),
-        loadAssistantState(session.access_token)
+        loadAssistantState(session.access_token),
+        loadJobMatches(session.access_token)
       ]);
     }
     bootstrap();
@@ -507,11 +549,12 @@ export default function DashboardPage() {
 
   useEffect(() => {
     const targetMap: Record<DashboardStep, string> = {
+      dashboard: "dashboard-home",
       profile: "profile",
       matched_jobs: "results",
       bookmarks: "bookmarks",
       auto_apply: "automation",
-      analytics: "analytics"
+      analytics: "analytics-metrics"
     };
     const element = document.getElementById(targetMap[activeStep]);
     if (element) {
@@ -572,21 +615,28 @@ export default function DashboardPage() {
       minimum_match_score: Number(minimumMatchScore || "80"),
       kpi_focus: subProfileKpiFocus.trim()
     };
-    setSubProfiles((current) => {
-      const withoutExisting = current.filter((item) => item.id !== identifier);
-      return [next, ...withoutExisting].slice(0, 8);
-    });
+    const nextSubProfiles = [next, ...subProfiles.filter((item) => item.id !== identifier)].slice(0, 8);
+    setSubProfiles(nextSubProfiles);
     setActiveSubProfileId(identifier);
-    setMessage(`Saved sub profile: ${next.name}`);
+    void persistProfile(
+      buildProfilePayload({ sub_profiles: nextSubProfiles, active_sub_profile_id: identifier }),
+      { advanceStep: null, silent: false, successMessage: `Saved sub profile: ${next.name}` }
+    );
   }
 
   function removeSubProfile(id: string): void {
-    setSubProfiles((current) => current.filter((item) => item.id !== id));
+    const nextSubProfiles = subProfiles.filter((item) => item.id !== id);
+    const nextActive = activeSubProfileId === id ? "" : activeSubProfileId;
+    setSubProfiles(nextSubProfiles);
     if (activeSubProfileId === id) {
       setActiveSubProfileId("");
       setSubProfileName("");
       setSubProfileKpiFocus("");
     }
+    void persistProfile(
+      buildProfilePayload({ sub_profiles: nextSubProfiles, active_sub_profile_id: nextActive }),
+      { advanceStep: null, silent: true, successMessage: null }
+    );
   }
 
   async function authFetch(url: string, options?: RequestInit): Promise<Response> {
@@ -760,6 +810,94 @@ export default function DashboardPage() {
     }
   }
 
+  async function loadJobMatches(accessToken: string = token, roleQuery?: string): Promise<void> {
+    if (!isBackendConfigured()) return;
+    setMatchesLoading(true);
+    try {
+      // Prefer an explicit role (e.g. after profile load); otherwise let the
+      // backend use the user's SAVED profile target_role (avoids the stale
+      // closed-over default targetRole from the initial render).
+      const q = (roleQuery ?? "").trim();
+      const res = await fetch(
+        `${backendUrl}/api/jobs/matches?limit=24${q ? `&q=${encodeURIComponent(q)}` : ""}`,
+        { headers: { Authorization: `Bearer ${accessToken}` } }
+      );
+      const data = await res.json();
+      setMatches(Array.isArray(data?.results) ? data.results : []);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setMatchesLoading(false);
+    }
+  }
+
+  async function applyToJob(job: MatchResult): Promise<void> {
+    // Always open the posting so the action does something even if queuing is gated.
+    if (typeof window !== "undefined" && job.url) {
+      window.open(normalizeBookmarkWebsite(job.url), "_blank", "noopener,noreferrer");
+    }
+    if (!isBackendConfigured()) {
+      setMessage(backendConfigMessage());
+      return;
+    }
+    // Create a real application row via auto-apply/run so it shows in the table
+    // and Submit all can pick it up. This is consent-gated on the backend.
+    try {
+      const res = await authFetch(`${backendUrl}/api/auto-apply/run`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          role: "custom",
+          custom_role: targetRole,
+          max_jobs: 1,
+          selected_jobs: [buildQueueItem(job)]
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.detail ?? "Could not queue this application.");
+      await loadApplications();
+      await loadSubscription();
+      setMessage(
+        `${job.title} at ${job.company}: ${data?.message ?? "queued"}. It's now in your applications table.`
+      );
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : "Could not queue this application.";
+      setMessage(
+        `${detail} Tip: Auto Apply needs a Pro plan plus Auto Apply + consent enabled under Settings.`
+      );
+    }
+  }
+
+  async function submitAllQueued(): Promise<void> {
+    const queued = applications.filter(
+      (a) => a.status === "queued_auto_apply" || a.status === "approval_required"
+    );
+    if (!queued.length) {
+      setMessage("No queued applications to submit yet. Move matched jobs into the queue first.");
+      return;
+    }
+    setSubmittingAll(true);
+    let ok = 0;
+    try {
+      for (const application of queued) {
+        try {
+          const res = await authFetch(`${backendUrl}/api/auto-apply/submit`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ application_id: application.id, dry_run: false })
+          });
+          if (res.ok) ok += 1;
+        } catch {
+          /* continue with the rest */
+        }
+      }
+      await loadApplications();
+      setMessage(`Submit all: ran ${ok}/${queued.length} through the engine. Updated statuses below.`);
+    } finally {
+      setSubmittingAll(false);
+    }
+  }
+
   async function updateApplicationStatus(applicationId: number, status: string): Promise<void> {
     if (!isBackendConfigured()) {
       setMessage(backendConfigMessage());
@@ -887,6 +1025,16 @@ export default function DashboardPage() {
       advanceStep: null,
       silent: false,
       successMessage: "Tailored document saved."
+    });
+  }
+
+  async function removeTailoredDocument(id: string): Promise<void> {
+    const next = tailoredDocuments.filter((d) => d.id !== id);
+    setTailoredDocuments(next);
+    await persistProfile(buildProfilePayload({ tailored_documents: next }), {
+      advanceStep: null,
+      silent: false,
+      successMessage: "Tailored document removed."
     });
   }
 
@@ -1135,13 +1283,16 @@ export default function DashboardPage() {
   async function addJobToAutoApplyQueue(
     job: MatchResult,
     overrides: Partial<AutoApplyQueueItem> = {},
-    nextPermissionRequests: PermissionRequest[] = permissionRequests
+    nextPermissionRequests: PermissionRequest[] = permissionRequests,
+    navigate: boolean = true
   ): Promise<void> {
     const nextItem = buildQueueItem(job, overrides);
     const nextQueue = [nextItem, ...autoApplyQueue.filter((item) => item.id !== nextItem.id)];
     setAutoApplyQueue(nextQueue);
-    setActiveStep("auto_apply");
-    setMessage(`${job.title} moved into the Auto Apply queue.`);
+    if (navigate) {
+      setActiveStep("auto_apply");
+      setMessage(`${job.title} moved into the Auto Apply queue.`);
+    }
     await persistProfile(
       buildProfilePayload({
         permission_requests: nextPermissionRequests,
@@ -1427,28 +1578,43 @@ export default function DashboardPage() {
       <aside className="dashboard-sidebar">
         <div className="sidebar-brand">
           <p className="brand">AIapply.ai</p>
-          <h1>Control Room</h1>
-          <p className="sidebar-copy">One workspace for matching, automation, and assistant support.</p>
         </div>
 
         <nav className="sidebar-nav" aria-label="Dashboard sections">
+          <button type="button" className={`sidebar-link${activeStep === "dashboard" ? " active" : ""}`} onClick={() => setActiveStep("dashboard")}>Dashboard</button>
+          <button type="button" className={`sidebar-link${activeStep === "matched_jobs" ? " active" : ""}`} onClick={() => setActiveStep("matched_jobs")}>Browse jobs</button>
+          <button type="button" className={`sidebar-link${activeStep === "analytics" ? " active" : ""}`} onClick={() => setActiveStep("analytics")}>
+            <span>Applications</span>
+            {applicationsCount > 0 && <span className="nav-badge">{applicationsCount}</span>}
+          </button>
+          <button
+            type="button"
+            className="sidebar-link"
+            onClick={() => {
+              setAppFilter("needs_you");
+              setActiveStep("dashboard");
+            }}
+          >
+            <span>Inbox</span>
+            {needsYouCount > 0 && <span className="nav-badge">{needsYouCount}</span>}
+          </button>
+          <button type="button" className={`sidebar-link${activeStep === "analytics" ? " active" : ""}`} onClick={() => setActiveStep("analytics")}>Tracker</button>
           <button type="button" className={`sidebar-link${activeStep === "profile" ? " active" : ""}`} onClick={() => setActiveStep("profile")}>Profile</button>
-          <button type="button" className={`sidebar-link${activeStep === "matched_jobs" ? " active" : ""}`} onClick={() => setActiveStep("matched_jobs")}>Matched Jobs</button>
+          <button type="button" className={`sidebar-link${activeStep === "auto_apply" ? " active" : ""}`} onClick={() => setActiveStep("auto_apply")}>Settings</button>
           <button type="button" className={`sidebar-link${activeStep === "bookmarks" ? " active" : ""}`} onClick={() => setActiveStep("bookmarks")}>Bookmarks</button>
-          <button type="button" className={`sidebar-link${activeStep === "auto_apply" ? " active" : ""}`} onClick={() => setActiveStep("auto_apply")}>Auto Apply</button>
-          <button type="button" className={`sidebar-link${activeStep === "analytics" ? " active" : ""}`} onClick={() => setActiveStep("analytics")}>Analytics</button>
         </nav>
 
         <div className="sidebar-plan-card">
           <span className={`plan-pill ${subscription.plan}`}>{subscription.label}</span>
-          <h3>{assistantUsageLabel}</h3>
-          <p>Status: {testingPremiumMode ? "testing unlock active" : subscription.status.replace(/_/g, " ")}</p>
-          {subscription.applications_monthly_limit ? (
-            <p>
-              Applications: {subscription.applications_used_this_month ?? 0}/{subscription.applications_monthly_limit} this month
-            </p>
-          ) : null}
-          <p className="field-hint">Testing mode is active, so Auto Apply and assistant workflows stay visible while we validate the product flow.</p>
+          <h3>{fullName || userEmail}</h3>
+          <p>
+            {subscription.applications_monthly_limit
+              ? `${subscription.applications_used_this_month ?? 0}/${subscription.applications_monthly_limit} applications this month`
+              : assistantUsageLabel}
+          </p>
+          {subscription.plan === "basic" && (
+            <button type="button" onClick={() => void startCheckout()}>Upgrade plan</button>
+          )}
         </div>
 
         <button onClick={signOut} className="ghost sidebar-signout">
@@ -1457,19 +1623,191 @@ export default function DashboardPage() {
       </aside>
 
       <section className="dashboard-main">
-        <header className="dashboard-topbar">
-          <div>
-            <p className="brand">Career Intelligence Dashboard</p>
-            <h2>{fullName || userEmail}</h2>
-            <p className="status-inline">
-              Resume-first matching, controlled automation, and a corner assistant for fast help.
-            </p>
+        <header className="dashboard-topbar tsenta-topbar">
+          <h2 className="topbar-title">
+            {activeStep === "dashboard"
+              ? "Dashboard"
+              : activeStep === "matched_jobs"
+                ? "Browse jobs"
+                : activeStep === "analytics"
+                  ? "Applications"
+                  : activeStep === "profile"
+                    ? "Profile"
+                    : activeStep === "auto_apply"
+                      ? "Settings"
+                      : "Bookmarks"}
+          </h2>
+          {(activeStep === "dashboard" || activeStep === "matched_jobs") ? (
+            <input
+              className="topbar-search"
+              type="search"
+              placeholder="Search by title, company..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          ) : (
+            <span className="topbar-search-spacer" />
+          )}
+          <div className="topbar-icons">
+            <button
+              type="button"
+              className="icon-btn"
+              title={`${needsYouCount} applications need you`}
+              aria-label="Notifications"
+              onClick={() => {
+                setAppFilter("needs_you");
+                setActiveStep("dashboard");
+              }}
+            >
+              🔔{needsYouCount > 0 && <span className="icon-dot" />}
+            </button>
+            <button
+              type="button"
+              className="icon-btn"
+              title="Help / assistant"
+              aria-label="Help"
+              onClick={() => setAssistantOpen(true)}
+            >
+              ?
+            </button>
           </div>
         </header>
 
         {message && <div className="status-banner">{message}</div>}
 
-        <section className="metric-grid" id="analytics">
+        {/* ---- Dashboard home (Tsenta-style) ---- */}
+        <section
+          id="dashboard-home"
+          className="tsenta-home"
+          style={activeStep === "dashboard" ? undefined : { display: "none" }}
+        >
+          <div className="card-header-row">
+            <h3>Top job matches</h3>
+            <button type="button" className="ghost" onClick={() => setActiveStep("matched_jobs")}>
+              Browse Jobs ›
+            </button>
+          </div>
+          <div className="match-grid">
+            {matchesLoading && topMatches.length === 0 ? (
+              <p className="empty-state">Finding matches…</p>
+            ) : topMatches.length === 0 ? (
+              <p className="empty-state">
+                No matches yet. Set your target role in Profile, then check back — or use Browse jobs.
+              </p>
+            ) : (
+              topMatches.slice(0, 4).map((job, i) => (
+                <article key={job.url || i} className={`match-card tint-${i % 4}`}>
+                  <div className="match-card-top">
+                    <div>
+                      <p className="match-company">{job.company}</p>
+                      <h4>{job.title}</h4>
+                    </div>
+                    <span
+                      className="match-ring"
+                      style={{
+                        background: `conic-gradient(${ringColor(job.ats_score)} ${job.ats_score * 3.6}deg, rgba(0,0,0,0.08) 0deg)`
+                      }}
+                    >
+                      <span className="match-ring-label">{job.ats_score}%</span>
+                    </span>
+                  </div>
+                  <div className="match-card-foot">
+                    <span className="match-source">{job.source}</span>
+                    <button type="button" onClick={() => void applyToJob(job)}>Apply</button>
+                  </div>
+                </article>
+              ))
+            )}
+          </div>
+
+          <div className="card-header-row applications-head">
+            <h3>All applications</h3>
+            <div className="inline-actions">
+              <button type="button" className="ghost" onClick={() => setActiveStep("analytics")}>Open Tracker</button>
+              <button type="button" onClick={() => void submitAllQueued()} disabled={submittingAll}>
+                {submittingAll ? "Submitting…" : "Submit all"}
+              </button>
+            </div>
+          </div>
+          <div className="app-filter-tabs">
+            {([
+              ["all", "All"],
+              ["in_flight", "In flight"],
+              ["needs_you", "Needs you"],
+              ["rejected", "Rejected"],
+              ["withdrawn", "Withdrawn"]
+            ] as const).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                className={`app-tab${appFilter === key ? " active" : ""}`}
+                onClick={() => setAppFilter(key)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="app-table-wrap">
+            <table className="app-table">
+              <thead>
+                <tr>
+                  <th>Position</th>
+                  <th>Resume</th>
+                  <th>Cover Letter</th>
+                  <th>Status</th>
+                  <th>Applied</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredApplications.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="empty-state">No applications in this view yet.</td>
+                  </tr>
+                ) : (
+                  filteredApplications.map((app) => (
+                    <tr key={app.id}>
+                      <td>
+                        <strong>{app.company || "Unknown company"}</strong>
+                        <span className="app-role">{app.title || "Untitled role"}</span>
+                      </td>
+                      <td>{tailoredFor(app, "resume")}</td>
+                      <td>{tailoredFor(app, "cover_letter")}</td>
+                      <td>
+                        <select
+                          className="status-select"
+                          value={app.status}
+                          onChange={(e) => void updateApplicationStatus(app.id, e.target.value)}
+                        >
+                          {["approval_required", "queued_auto_apply", "viewed", "applied", "replied", "interviewing", "rejected", "withdrawn"].map((s) => (
+                            <option key={s} value={s}>{s.replace(/_/g, " ")}</option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="app-applied">
+                        {app.created_at ? new Date(app.created_at).toLocaleDateString() : "—"}
+                        {app.job_url && (
+                          <button
+                            type="button"
+                            className="ghost app-open"
+                            onClick={() => window.open(normalizeBookmarkWebsite(app.job_url), "_blank", "noopener,noreferrer")}
+                          >
+                            Open
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section
+          className="metric-grid"
+          id="analytics-metrics"
+          style={activeStep === "dashboard" ? { display: "none" } : undefined}
+        >
           <article className="metric-card">
             <p className="metric-label">Profile Completion</p>
             <strong>{profileCompletion}%</strong>
@@ -1492,7 +1830,7 @@ export default function DashboardPage() {
           </article>
         </section>
 
-        <section className="dashboard-grid">
+        <section className="dashboard-grid" style={activeStep === "dashboard" ? { display: "none" } : undefined}>
           <article
             className="dashboard-card dashboard-card-wide"
             id="profile"
@@ -2393,7 +2731,7 @@ export default function DashboardPage() {
                       <button
                         type="button"
                         className="ghost"
-                        onClick={() => setTailoredDocuments((cur) => cur.filter((d) => d.id !== doc.id))}
+                        onClick={() => void removeTailoredDocument(doc.id)}
                       >
                         Remove
                       </button>
