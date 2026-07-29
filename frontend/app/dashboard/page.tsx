@@ -270,10 +270,10 @@ export default function DashboardPage() {
   const [companiesToAvoid, setCompaniesToAvoid] = useState("");
   const [maxApplicationsPerDay, setMaxApplicationsPerDay] = useState("10");
   const [minimumMatchScore, setMinimumMatchScore] = useState("30");
+  // Sub-profile (multi-role) data is preserved in the profile payload for backwards
+  // compatibility, but the editing UI has been removed in favor of resume-driven setup.
   const [subProfiles, setSubProfiles] = useState<SubProfile[]>([]);
   const [activeSubProfileId, setActiveSubProfileId] = useState("");
-  const [subProfileName, setSubProfileName] = useState("");
-  const [subProfileKpiFocus, setSubProfileKpiFocus] = useState("");
   const [bookmarks, setBookmarks] = useState<BookmarkEntry[]>([]);
   const [bookmarkCompany, setBookmarkCompany] = useState("");
   const [bookmarkWebsite, setBookmarkWebsite] = useState("");
@@ -579,13 +579,6 @@ export default function DashboardPage() {
   }, [assistantMode, assistantModes]);
 
   useEffect(() => {
-    const active = subProfiles.find((item) => item.id === activeSubProfileId);
-    if (!active) return;
-    setSubProfileName(active.name);
-    setSubProfileKpiFocus(active.kpi_focus);
-  }, [activeSubProfileId, subProfiles]);
-
-  useEffect(() => {
     const targetMap: Record<DashboardStep, string> = {
       dashboard: "dashboard-home",
       profile: "profile",
@@ -624,58 +617,6 @@ export default function DashboardPage() {
       return "The Anthropic assistant hit a quota, billing limit, or rate-limit issue. Check Anthropic billing and usage for the key configured in Render, then try again.";
     }
     return text;
-  }
-
-  function syncFromSubProfile(profile: SubProfile): void {
-    setActiveSubProfileId(profile.id);
-    setSubProfileName(profile.name);
-    setSubProfileKpiFocus(profile.kpi_focus);
-    if (profile.target_role) setTargetRole(profile.target_role);
-    if (profile.target_sector) setTargetSector(profile.target_sector);
-    if (profile.preferred_locations) setPreferredLocations(profile.preferred_locations);
-    if (profile.work_preferences.length) setWorkPreferences(profile.work_preferences.join(", "));
-    if (profile.companies_to_avoid) setCompaniesToAvoid(profile.companies_to_avoid);
-    if (profile.minimum_match_score) setMinimumMatchScore(String(profile.minimum_match_score));
-  }
-
-  function saveCurrentAsSubProfile(): void {
-    const identifier = activeSubProfileId || `sub-${Date.now()}`;
-    const next: SubProfile = {
-      id: identifier,
-      name: subProfileName.trim() || targetRole.trim() || `Profile ${subProfiles.length + 1}`,
-      target_role: targetRole.trim(),
-      target_sector: targetSector.trim(),
-      preferred_locations: preferredLocations.trim(),
-      work_preferences: workPreferences
-        .split(",")
-        .map((item) => item.trim())
-        .filter(Boolean),
-      companies_to_avoid: companiesToAvoid.trim(),
-      minimum_match_score: Number(minimumMatchScore || "80"),
-      kpi_focus: subProfileKpiFocus.trim()
-    };
-    const nextSubProfiles = [next, ...subProfiles.filter((item) => item.id !== identifier)].slice(0, 8);
-    setSubProfiles(nextSubProfiles);
-    setActiveSubProfileId(identifier);
-    void persistProfile(
-      buildProfilePayload({ sub_profiles: nextSubProfiles, active_sub_profile_id: identifier }),
-      { advanceStep: null, silent: false, successMessage: `Saved sub profile: ${next.name}` }
-    );
-  }
-
-  function removeSubProfile(id: string): void {
-    const nextSubProfiles = subProfiles.filter((item) => item.id !== id);
-    const nextActive = activeSubProfileId === id ? "" : activeSubProfileId;
-    setSubProfiles(nextSubProfiles);
-    if (activeSubProfileId === id) {
-      setActiveSubProfileId("");
-      setSubProfileName("");
-      setSubProfileKpiFocus("");
-    }
-    void persistProfile(
-      buildProfilePayload({ sub_profiles: nextSubProfiles, active_sub_profile_id: nextActive }),
-      { advanceStep: null, silent: true, successMessage: null }
-    );
   }
 
   async function authFetch(url: string, options?: RequestInit): Promise<Response> {
@@ -975,7 +916,27 @@ export default function DashboardPage() {
       if (!res.ok) throw new Error(data?.detail ?? "Resume upload failed.");
       setResumeStoragePath(data.resume_storage_path ?? "");
       setResumeStorageFilename(data.resume_filename ?? "");
-      setMessage(`Resume saved for auto-submit: ${data.resume_filename ?? ""}`);
+      // Reload the profile so resume-extracted fields (name, skills, links, …) hydrate
+      // into state — otherwise a later "Save Profile" would overwrite them with stale,
+      // empty form state. Preserve a Target Role the user is actively editing, since
+      // loadProfile would otherwise reset it to the saved/default value.
+      if (token) {
+        const pendingRole = roleInputDirty ? targetRole : "";
+        await loadProfile(token);
+        if (pendingRole) setTargetRole(pendingRole);
+      }
+      const extracted = (data.extracted ?? {}) as Record<string, unknown>;
+      const extractedFields = Object.keys(extracted);
+      if (extractedFields.length) {
+        const skillCount = Array.isArray(extracted.skills) ? extracted.skills.length : 0;
+        const labels = extractedFields
+          .filter((k) => k !== "skills")
+          .map((k) => k.replace(/_/g, " "));
+        if (skillCount) labels.push(`${skillCount} skills`);
+        setMessage(`Resume saved — extracted ${labels.join(", ")}.`);
+      } else {
+        setMessage(`Resume saved for auto-submit: ${data.resume_filename ?? ""}`);
+      }
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Resume upload failed.");
     }
@@ -1903,8 +1864,9 @@ export default function DashboardPage() {
           >
             <div className="card-header-row">
               <div>
-                <p className="feature-kicker">Search Strategy</p>
-                <h3>Targeting Console</h3>
+                <p className="feature-kicker">Profile</p>
+                <h3>Your Profile</h3>
+                <span className="field-hint">Upload your resume and tell us the role — we extract the rest.</span>
               </div>
               <div className="inline-actions">
                 <button onClick={() => void saveProfile()}>Save Profile</button>
@@ -1914,17 +1876,6 @@ export default function DashboardPage() {
               </div>
             </div>
             <div className="dashboard-form-grid">
-              <label>
-                Job Sector
-                <select value={targetSector} onChange={(e) => setTargetSector(e.target.value)}>
-                  <option value="">Any sector</option>
-                  {profileOptions.job_sectors.map((sector) => (
-                    <option key={sector} value={sector}>
-                      {sector}
-                    </option>
-                  ))}
-                </select>
-              </label>
               <label className="dashboard-field-wide">
                 Target Role
                 <input
@@ -1958,189 +1909,26 @@ export default function DashboardPage() {
                 )}
               </label>
               <label>
-                Country
-                <select
-                  value={country}
-                  onChange={(e) => {
-                    setCountry(e.target.value);
-                    setRegion("");
-                  }}
-                >
-                  <option value="">Any country</option>
-                  {profileOptions.countries.map((entry) => (
-                    <option key={entry.label} value={entry.label}>
-                      {entry.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                State / Province / Region
-                <select
-                  value={region}
-                  onChange={(e) => setRegion(e.target.value)}
-                  disabled={!country || availableRegions.length === 0}
-                >
-                  <option value="">{country ? "Any region" : "Select country first"}</option>
-                  {availableRegions.map((entry) => (
-                    <option key={entry} value={entry}>
-                      {entry}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Preferred Locations
-                <input
-                  placeholder="Remote, New York, Austin..."
-                  value={preferredLocations}
-                  onChange={(e) => setPreferredLocations(e.target.value)}
-                />
-              </label>
-              <label>
-                Work Preferences
-                <select value={workPreferences} onChange={(e) => setWorkPreferences(e.target.value)}>
-                  <option value="">Select work preference</option>
-                  {profileOptions.work_preference_options.map((option) => (
-                    <option key={option} value={option}>{option}</option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Company Ranking Filter
-                <select
-                  value={companyRankingFilter}
-                  onChange={(e) => setCompanyRankingFilter(e.target.value)}
-                >
-                  {profileOptions.company_ranking_filters.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
                 Upload Resume
                 <input
                   type="file"
                   accept=".pdf,.docx,.txt,.md"
-                  onChange={(e) => setResumeFile(e.target.files?.[0] ?? null)}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0] ?? null;
+                    setResumeFile(file);
+                    // One upload does it all: store for auto-submit AND extract
+                    // name/skills/links/summary into the profile.
+                    if (file) void uploadResumeToStorage(file);
+                  }}
                 />
-                <span className="field-hint">{resumeFile ? resumeFile.name : "No file selected yet."}</span>
+                <span className="field-hint">
+                  {resumeStorageFilename
+                    ? `Stored: ${resumeStorageFilename} — we extract your details automatically.`
+                    : resumeFile
+                      ? resumeFile.name
+                      : "Upload your resume — we extract your name, skills, links, and summary."}
+                </span>
               </label>
-            </div>
-          </article>
-
-          <article
-            className="dashboard-card"
-            style={activeStep === "profile" ? undefined : { display: "none" }}
-          >
-            <div className="card-header-row">
-              <div>
-                <p className="feature-kicker">Profile</p>
-                <h3>Candidate Snapshot</h3>
-              </div>
-            </div>
-            <div className="dashboard-form-grid">
-              <label>
-                Full Name
-                <input value={fullName} onChange={(e) => setFullName(e.target.value)} />
-              </label>
-              <label>
-                Experience Level
-                <input
-                  placeholder="Entry-level, 3 years, Senior"
-                  value={experienceLevel}
-                  onChange={(e) => setExperienceLevel(e.target.value)}
-                />
-              </label>
-              <label className="dashboard-field-wide">
-                Skills
-                <textarea
-                  rows={4}
-                  placeholder="Python, FastAPI, React, ICU, EMR"
-                  value={skillsText}
-                  onChange={(e) => setSkillsText(e.target.value)}
-                />
-              </label>
-              <label>
-                LinkedIn URL
-                <input value={linkedinUrl} onChange={(e) => setLinkedinUrl(e.target.value)} />
-              </label>
-              <label>
-                Portfolio URL
-                <input value={portfolioUrl} onChange={(e) => setPortfolioUrl(e.target.value)} />
-              </label>
-              <label className="dashboard-field-wide">
-                Application Summary
-                <textarea
-                  rows={4}
-                  placeholder="Short summary used for applications"
-                  value={applicationSummary}
-                  onChange={(e) => setApplicationSummary(e.target.value)}
-                />
-              </label>
-            </div>
-          </article>
-
-          <article
-            className="dashboard-card"
-            style={activeStep === "profile" ? undefined : { display: "none" }}
-          >
-            <div className="card-header-row">
-              <div>
-                <p className="feature-kicker">Multi Role Strategy</p>
-                <h3>Sub Profiles</h3>
-              </div>
-              <button type="button" onClick={saveCurrentAsSubProfile} className="ghost">
-                Save Current Role
-              </button>
-            </div>
-            <div className="dashboard-form-grid">
-              <label>
-                Sub Profile Name
-                <input
-                  value={subProfileName}
-                  onChange={(e) => setSubProfileName(e.target.value)}
-                  placeholder="Frontend Focus, AI Automation, Backend Core"
-                />
-              </label>
-              <label>
-                KPI / Role Goal
-                <input
-                  value={subProfileKpiFocus}
-                  onChange={(e) => setSubProfileKpiFocus(e.target.value)}
-                  placeholder="React roles in remote US, 5 applications daily"
-                />
-              </label>
-            </div>
-            <div className="sub-profile-list">
-              {subProfiles.length === 0 ? (
-                <p className="empty-state">
-                  Save multiple role strategies here for frontend, backend, full stack, AI automation, and more.
-                </p>
-              ) : (
-                subProfiles.map((item) => (
-                  <article
-                    key={item.id}
-                    className={`sub-profile-card${item.id === activeSubProfileId ? " active" : ""}`}
-                  >
-                    <div>
-                      <h4>{item.name}</h4>
-                      <p>{item.target_role || "Untitled role"} · {item.preferred_locations || "Any location"}</p>
-                      {item.kpi_focus && <p>{item.kpi_focus}</p>}
-                    </div>
-                    <div className="feature-actions">
-                      <button type="button" className="ghost" onClick={() => syncFromSubProfile(item)}>
-                        Use
-                      </button>
-                      <button type="button" className="ghost" onClick={() => removeSubProfile(item.id)}>
-                        Remove
-                      </button>
-                    </div>
-                  </article>
-                ))
-              )}
             </div>
           </article>
 

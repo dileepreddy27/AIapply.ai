@@ -35,6 +35,7 @@ from .plans import (
     resolve_plan_from_price_id,
 )
 from .rag import MatchResult, recommend_jobs_rag, role_suggestions
+from .resume_extractor import extract_profile_fields
 from .role_catalog import get_roles_for_sector
 from .aggregators import scan_jsearch, scan_rss, scan_serpapi_google_jobs
 from .scanners import (
@@ -277,6 +278,36 @@ def _cached_aggregator_scan(cache_key: str, runner: Any) -> list[JobPosting]:
     if ttl > 0:
         _AGG_CACHE[cache_key] = (now, result)
     return result
+
+
+# Per-user sliding-window rate limit for the discovery endpoints. Job discovery fans
+# out to billable aggregator APIs (JSearch/SerpApi), so an authenticated user must not
+# be able to hammer it. In-process only (per worker) — front with Redis for multi-node.
+_DISCOVERY_HITS: dict[str, list[float]] = {}
+
+
+def _enforce_discovery_rate_limit(user_id: str) -> None:
+    try:
+        limit = int(os.getenv("DISCOVERY_RATE_LIMIT", "20"))
+    except ValueError:
+        limit = 20
+    try:
+        window = float(os.getenv("DISCOVERY_RATE_WINDOW", "60"))
+    except ValueError:
+        window = 60.0
+    if limit <= 0 or window <= 0 or not user_id:
+        return
+    now = time.monotonic()
+    hits = [t for t in _DISCOVERY_HITS.get(user_id, []) if now - t < window]
+    if len(hits) >= limit:
+        retry_after = max(1, int(window - (now - hits[0])))
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many match requests. Try again in {retry_after}s.",
+            headers={"Retry-After": str(retry_after)},
+        )
+    hits.append(now)
+    _DISCOVERY_HITS[user_id] = hits
 
 
 def _discover_live_jobs_with_diagnostics(
@@ -1855,6 +1886,7 @@ def get_job_matches(
     """
     user = _current_user(authorization)
     user_id = _user_id_from_user(user)
+    _enforce_discovery_rate_limit(user_id)
     sb = _supabase()
     profile = _fetch_profile_row(sb, user_id)
     role_query = q.strip() or str((profile or {}).get("target_role", "") or "").strip()
@@ -2006,18 +2038,59 @@ async def upload_resume(
             ),
         )
 
-    # Persist the path onto the profile's application_profile (merge, don't clobber).
+    # Parse the resume into structured fields so it becomes the source of truth for
+    # candidate data (name, skills, links, summary, ...). LLM-first with a heuristic
+    # fallback; missing fields stay empty and never overwrite existing data with blanks.
+    extracted = extract_profile_fields(text, user_id)
+    applied: dict[str, Any] = {}
     try:
         profile = _fetch_profile_row(sb, user_id) or {}
         app_profile = dict(profile.get("application_profile") or {})
         app_profile["resume_storage_path"] = storage_path
         app_profile["resume_filename"] = filename
-        sb.table("profiles").upsert(
-            {"id": user_id, "email": user.get("email", ""), "application_profile": app_profile}
-        ).execute()
+        # Merge resume-derived jsonb fields, overwriting only when the resume had a value.
+        for key in ("phone", "location", "linkedin_url", "portfolio_url", "github_url", "summary"):
+            value = extracted.get(key)
+            if value:
+                app_profile[key] = value
+                applied[key] = value
+
+        payload: dict[str, Any] = {
+            "id": user_id,
+            "email": user.get("email", ""),
+            "application_profile": app_profile,
+        }
+        # Top-level columns — overwrite only when the resume provided a value. We never
+        # touch target_role (user-controlled) or the work-auth/screening answers.
+        if extracted.get("full_name"):
+            payload["full_name"] = extracted["full_name"]
+            applied["full_name"] = extracted["full_name"]
+        if extracted.get("experience_level"):
+            payload["experience_level"] = extracted["experience_level"]
+            applied["experience_level"] = extracted["experience_level"]
+        if extracted.get("skills"):
+            payload["skills"] = extracted["skills"]
+            applied["skills"] = extracted["skills"]
+
+        try:
+            sb.table("profiles").upsert(payload).execute()
+        except Exception as exc:
+            # Backward compat: retry without the jsonb column if the schema predates it.
+            if "application_profile" in str(exc).lower():
+                legacy = dict(payload)
+                legacy.pop("application_profile", None)
+                sb.table("profiles").upsert(legacy).execute()
+            else:
+                raise
     except Exception:
-        pass
-    return {"ok": True, "resume_storage_path": storage_path, "resume_filename": filename}
+        # Persistence failed — don't claim we saved fields we didn't.
+        applied = {}
+    return {
+        "ok": True,
+        "resume_storage_path": storage_path,
+        "resume_filename": filename,
+        "extracted": applied,
+    }
 
 
 def _download_resume_to_temp(sb: Client, storage_path: str) -> str | None:
@@ -2051,6 +2124,7 @@ async def rag_match(
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
     user = _current_user(authorization)
+    _enforce_discovery_rate_limit(_user_id_from_user(user))
     payload = await resume_file.read()
     try:
         resume_text = _extract_resume_text(resume_file.filename or "", payload).strip()
