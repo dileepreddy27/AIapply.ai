@@ -2083,7 +2083,8 @@ async def upload_resume(
             else:
                 raise
     except Exception:
-        pass
+        # Persistence failed — don't claim we saved fields we didn't.
+        applied = {}
     return {
         "ok": True,
         "resume_storage_path": storage_path,

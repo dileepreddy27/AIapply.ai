@@ -916,8 +916,15 @@ export default function DashboardPage() {
       if (!res.ok) throw new Error(data?.detail ?? "Resume upload failed.");
       setResumeStoragePath(data.resume_storage_path ?? "");
       setResumeStorageFilename(data.resume_filename ?? "");
-      // Reload the profile so resume-extracted fields (name, skills, links, …) hydrate.
-      if (token) await loadProfile(token);
+      // Reload the profile so resume-extracted fields (name, skills, links, …) hydrate
+      // into state — otherwise a later "Save Profile" would overwrite them with stale,
+      // empty form state. Preserve a Target Role the user is actively editing, since
+      // loadProfile would otherwise reset it to the saved/default value.
+      if (token) {
+        const pendingRole = roleInputDirty ? targetRole : "";
+        await loadProfile(token);
+        if (pendingRole) setTargetRole(pendingRole);
+      }
       const extracted = (data.extracted ?? {}) as Record<string, unknown>;
       const extractedFields = Object.keys(extracted);
       if (extractedFields.length) {
