@@ -822,6 +822,34 @@ export default function DashboardPage() {
     }
   }
 
+  async function loadBrowseJobs(): Promise<void> {
+    // Populate the Browse tab from the saved-profile match feed so the tab — and its
+    // search box — has data even before the user runs a resume-based match.
+    if (!isBackendConfigured() || !token) return;
+    setMatchesLoading(true);
+    try {
+      const q = targetRole.trim();
+      const res = await fetch(
+        `${backendUrl}/api/jobs/matches?limit=48${q ? `&q=${encodeURIComponent(q)}` : ""}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      const data = await res.json();
+      const rows = (Array.isArray(data?.results) ? data.results : []) as MatchResult[];
+      setResults(rows);
+      setMatches(rows);
+      setDiscoveryDiagnostics(data?.source_diagnostics ?? null);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setMatchesLoading(false);
+    }
+  }
+
+  function openBrowseJobs(): void {
+    setActiveStep("matched_jobs");
+    if (!results.length) void loadBrowseJobs();
+  }
+
   async function applyToJob(job: MatchResult): Promise<void> {
     // Always open the posting so the action does something even if queuing is gated.
     if (typeof window !== "undefined" && job.url) {
@@ -911,6 +939,9 @@ export default function DashboardPage() {
   }
 
   async function uploadResumeToStorage(file: File): Promise<void> {
+    // Capture the file for "Match Jobs" (canRunMatch) no matter which upload input
+    // was used, so uploading never leaves Match disabled.
+    setResumeFile(file);
     if (!isBackendConfigured()) {
       setMessage(backendConfigMessage());
       return;
@@ -1393,7 +1424,11 @@ export default function DashboardPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.detail ?? "Match request failed.");
-      setResults(data.results ?? []);
+      const matchResults = (data.results ?? []) as MatchResult[];
+      setResults(matchResults);
+      // Keep the dashboard-home "Top job matches" feed in sync (it renders `matches`,
+      // which is otherwise only loaded once on mount and would stay stale/empty).
+      setMatches(matchResults);
       setDiscoveryDiagnostics(data.source_diagnostics ?? null);
       setPostedWindow("all");
       setSourceFilter("all");
@@ -1597,7 +1632,7 @@ export default function DashboardPage() {
           <button type="button" className={`sidebar-link${activeStep === "dashboard" ? " active" : ""}`} onClick={() => setActiveStep("dashboard")}>
             <span className="nav-ico">▦</span><span className="nav-text">Dashboard</span>
           </button>
-          <button type="button" className={`sidebar-link${activeStep === "matched_jobs" ? " active" : ""}`} onClick={() => setActiveStep("matched_jobs")}>
+          <button type="button" className={`sidebar-link${activeStep === "matched_jobs" ? " active" : ""}`} onClick={openBrowseJobs}>
             <span className="nav-ico">⌕</span><span className="nav-text">Browse jobs</span>
           </button>
           <button type="button" className={`sidebar-link${activeStep === "analytics" ? " active" : ""}`} onClick={() => setActiveStep("analytics")}>
@@ -1723,7 +1758,7 @@ export default function DashboardPage() {
         >
           <div className="card-header-row">
             <h3>Top job matches</h3>
-            <button type="button" className="ghost" onClick={() => setActiveStep("matched_jobs")}>
+            <button type="button" className="ghost" onClick={openBrowseJobs}>
               Browse Jobs ›
             </button>
           </div>

@@ -2140,13 +2140,29 @@ async def rag_match(
     if live_jobs:
         jobs = _dedupe_jobs([*jobs, *live_jobs])
     if not jobs:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "No jobs found from configured imports or live ATS sources. Add imports in data/imports CSVs "
-                "or configure LIVE_GREENHOUSE_BOARDS/LIVE_LEVER_SITES env vars."
-            ),
+        # Return a diagnosable empty result (not a bare 400) so the UI can show WHY
+        # discovery found nothing. jobs.jsonl/imports are empty by default, so this means
+        # every live ATS/aggregator source returned nothing or errored (commonly the
+        # backend cannot reach the ATS APIs from its deploy environment).
+        checked = discovery_diagnostics.get("sources_checked", 0)
+        errors = discovery_diagnostics.get("source_errors", []) or []
+        hint = (
+            f"No openings came back from {checked} live source(s)"
+            + (f", {len(errors)} errored" if errors else "")
+            + ". Check LIVE_GREENHOUSE_BOARDS / LIVE_LEVER_SITES / LIVE_ASHBY_BOARDS and that "
+            "the backend can reach those ATS APIs."
         )
+        return {
+            "role": query_role,
+            "resume_keywords": [],
+            "count": 0,
+            "results": [],
+            "scanned_jobs": 0,
+            "live_jobs": 0,
+            "used_fallback": False,
+            "message": hint,
+            "source_diagnostics": discovery_diagnostics,
+        }
 
     # Blend profile context with resume context for better relevance.
     sb = _supabase()
