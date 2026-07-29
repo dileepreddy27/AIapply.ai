@@ -50,6 +50,7 @@ def _normalize_job(
     location: str = "",
     description: str = "",
     posted_at: str = "",
+    apply_type: str = "unknown",
 ) -> JobPosting:
     title = title.strip() or "Unknown Role"
     company = company.strip() or "Unknown Company"
@@ -63,6 +64,7 @@ def _normalize_job(
         url=url.strip(),
         description=description.strip(),
         posted_at=_normalize_timestamp(posted_at),
+        apply_type=apply_type,
     )
 
 
@@ -91,6 +93,7 @@ def scan_greenhouse(board_token: str) -> list[JobPosting]:
                 location=str((j.get("location") or {}).get("name", "")),
                 description=str(j.get("content", "")),
                 posted_at=str(j.get("updated_at", "")),
+                apply_type="external_ats",
             )
         )
     return [j for j in out if j.url]
@@ -112,6 +115,7 @@ def scan_lever(site: str) -> list[JobPosting]:
                 location=str(categories.get("location", "")),
                 description=str(j.get("descriptionPlain", "")),
                 posted_at=j.get("createdAt") or j.get("updatedAt") or "",
+                apply_type="external_ats",
             )
         )
     return [j for j in out if j.url]
@@ -142,6 +146,60 @@ def scan_ashby(org: str) -> list[JobPosting]:
                 location=location,
                 description=str(j.get("descriptionPlain", "") or ""),
                 posted_at=j.get("publishedAt") or j.get("updatedAt") or "",
+                apply_type="external_ats",
+            )
+        )
+    return [j for j in out if j.url]
+
+
+def scan_smartrecruiters(company: str) -> list[JobPosting]:
+    url = f"https://api.smartrecruiters.com/v1/companies/{company}/postings?limit=100"
+    data = _get_json(url)
+    rows = data.get("content", []) if isinstance(data, dict) else []
+    out: list[JobPosting] = []
+    for j in rows:
+        if not isinstance(j, dict):
+            continue
+        loc = j.get("location") or {}
+        parts = [str(loc.get("city", "") or ""), str(loc.get("region", "") or ""), str(loc.get("country", "") or "")]
+        location = ", ".join(p for p in parts if p)
+        if loc.get("remote"):
+            location = f"{location} (Remote)".strip(", ").strip()
+        posting_id = str(j.get("id", "") or "")
+        apply_url = f"https://jobs.smartrecruiters.com/{company}/{posting_id}" if posting_id else ""
+        out.append(
+            _normalize_job(
+                source="smartrecruiters",
+                url=apply_url,
+                title=str(j.get("name", "")),
+                company=str((j.get("company") or {}).get("name", "") or company),
+                location=location,
+                description="",
+                posted_at=j.get("releasedDate") or j.get("createdOn") or "",
+                apply_type="external_ats",
+            )
+        )
+    return [j for j in out if j.url]
+
+
+def scan_recruitee(company: str) -> list[JobPosting]:
+    url = f"https://{company}.recruitee.com/api/offers/"
+    data = _get_json(url)
+    rows = data.get("offers", []) if isinstance(data, dict) else []
+    out: list[JobPosting] = []
+    for j in rows:
+        if not isinstance(j, dict):
+            continue
+        out.append(
+            _normalize_job(
+                source="recruitee",
+                url=str(j.get("careers_url", "") or j.get("careers_apply_url", "")),
+                title=str(j.get("title", "")),
+                company=company,
+                location=str(j.get("location", "") or ""),
+                description=str(j.get("description", "") or ""),
+                posted_at=j.get("published_at") or j.get("created_at") or "",
+                apply_type="external_ats",
             )
         )
     return [j for j in out if j.url]

@@ -7,6 +7,7 @@ from io import BytesIO, StringIO
 import os
 from pathlib import Path
 import re
+import time
 from typing import Any
 
 from dotenv import load_dotenv
@@ -35,7 +36,14 @@ from .plans import (
 )
 from .rag import MatchResult, recommend_jobs_rag, role_suggestions
 from .role_catalog import get_roles_for_sector
-from .scanners import scan_ashby, scan_greenhouse, scan_lever
+from .aggregators import scan_jsearch, scan_rss, scan_serpapi_google_jobs
+from .scanners import (
+    scan_ashby,
+    scan_greenhouse,
+    scan_lever,
+    scan_recruitee,
+    scan_smartrecruiters,
+)
 from .storage import load_jobs
 from .tailoring import TAILOR_MODES, run_tailoring
 
@@ -94,6 +102,10 @@ DEFAULT_ASHBY_ORGS = [
     "clipboardhealth",
     "vanta",
 ]
+# Additional ATS sources (public APIs). Empty by default — configure per org via
+# LIVE_SMARTRECRUITERS_COMPANIES / LIVE_RECRUITEE_COMPANIES env vars.
+DEFAULT_SMARTRECRUITERS_COMPANIES: list[str] = []
+DEFAULT_RECRUITEE_COMPANIES: list[str] = []
 
 
 def _cors_origins() -> list[str]:
@@ -181,13 +193,90 @@ def _text_matches_query(job: JobPosting, query: str) -> bool:
 
 
 def _dedupe_jobs(jobs: list[JobPosting]) -> list[JobPosting]:
+    # First collapse exact-URL duplicates.
     by_url: dict[str, JobPosting] = {}
     for job in jobs:
         if not job.url:
             continue
-        if job.url not in by_url:
-            by_url[job.url] = job
-    return list(by_url.values())
+        by_url.setdefault(job.url, job)
+
+    def _role_key(job: JobPosting) -> str:
+        return re.sub(r"\s+", " ", f"{job.company}|{job.title}|{job.location}".lower()).strip()
+
+    def _is_direct(job: JobPosting) -> bool:
+        # A directly-applyable listing (ATS-hosted or a company's own site).
+        return job.apply_type in {"external_ats", "direct"}
+
+    def _rank(job: JobPosting) -> int:
+        score = 0
+        if job.apply_type not in {"unknown", ""}:
+            score += 1
+        if job.description:
+            score += 1
+        return score
+
+    # Keep EVERY distinct-URL direct/ATS listing — two different reqs at the same
+    # company can share company+title+location, and each is separately applyable, so
+    # they must not be collapsed into one. Record their role keys.
+    result: list[JobPosting] = []
+    direct_keys: set[str] = set()
+    for job in by_url.values():
+        if _is_direct(job):
+            result.append(job)
+            direct_keys.add(_role_key(job))
+
+    # For aggregator listings (LinkedIn/Indeed/Glassdoor/Google Jobs/imports), collapse
+    # the SAME role across platforms: drop one entirely when a direct listing already
+    # covers that role, and otherwise keep the single most-actionable per role key.
+    agg_best: dict[str, JobPosting] = {}
+    for job in by_url.values():
+        if _is_direct(job):
+            continue
+        key = _role_key(job)
+        if key in direct_keys:
+            continue  # a directly-applyable version wins over the aggregator link
+        current = agg_best.get(key)
+        if current is None or _rank(job) > _rank(current):
+            agg_best[key] = job
+    result.extend(agg_best.values())
+    return result
+
+
+def _redact_secrets(message: str) -> str:
+    """Strip known API keys from diagnostics/error strings before they are returned
+    to a client. SerpApi puts its key in the request URL, so a failed request's
+    exception text would otherwise expose it via source_diagnostics."""
+    out = message
+    for env_name in ("SERPAPI_KEY", "RAPIDAPI_KEY", "ANTHROPIC_API_KEY", "SUPABASE_SERVICE_ROLE_KEY", "STRIPE_SECRET_KEY"):
+        secret = os.getenv(env_name, "").strip()
+        if secret and secret in out:
+            out = out.replace(secret, "***")
+    return out
+
+
+# Short-TTL cache for the billable aggregator APIs (JSearch/SerpApi/RSS) so repeated
+# /api/jobs/matches and /api/rag/match polling does not fire one paid request per call.
+_AGG_CACHE: dict[str, tuple[float, list[JobPosting]]] = {}
+
+
+def _aggregator_cache_ttl() -> float:
+    try:
+        return float(os.getenv("AGGREGATOR_CACHE_TTL", "900"))
+    except ValueError:
+        return 900.0
+
+
+def _cached_aggregator_scan(cache_key: str, runner: Any) -> list[JobPosting]:
+    ttl = _aggregator_cache_ttl()
+    now = time.monotonic()
+    if ttl > 0:
+        hit = _AGG_CACHE.get(cache_key)
+        if hit is not None and (now - hit[0]) < ttl:
+            return hit[1]
+    result = runner()  # only cached on success; exceptions propagate uncached
+    if ttl > 0:
+        _AGG_CACHE[cache_key] = (now, result)
+    return result
 
 
 def _discover_live_jobs_with_diagnostics(
@@ -238,7 +327,7 @@ def _discover_live_jobs_with_diagnostics(
             )
         except Exception as exc:
             if len(diagnostics["source_errors"]) < 8:
-                diagnostics["source_errors"].append(f"greenhouse:{token}:{exc}")
+                diagnostics["source_errors"].append(_redact_secrets(f"greenhouse:{token}:{exc}"))
             continue
     lever_sites = _split_env_list("LIVE_LEVER_SITES", DEFAULT_LEVER_SITES)
     if lever_limit is not None and lever_limit > 0:
@@ -254,7 +343,7 @@ def _discover_live_jobs_with_diagnostics(
             )
         except Exception as exc:
             if len(diagnostics["source_errors"]) < 8:
-                diagnostics["source_errors"].append(f"lever:{site}:{exc}")
+                diagnostics["source_errors"].append(_redact_secrets(f"lever:{site}:{exc}"))
             continue
 
     ashby_orgs = _split_env_list("LIVE_ASHBY_BOARDS", DEFAULT_ASHBY_ORGS)
@@ -271,8 +360,51 @@ def _discover_live_jobs_with_diagnostics(
             )
         except Exception as exc:
             if len(diagnostics["source_errors"]) < 8:
-                diagnostics["source_errors"].append(f"ashby:{org}:{exc}")
+                diagnostics["source_errors"].append(_redact_secrets(f"ashby:{org}:{exc}"))
             continue
+
+    for source_name, env_name, defaults, scanner in (
+        ("smartrecruiters", "LIVE_SMARTRECRUITERS_COMPANIES", DEFAULT_SMARTRECRUITERS_COMPANIES, scan_smartrecruiters),
+        ("recruitee", "LIVE_RECRUITEE_COMPANIES", DEFAULT_RECRUITEE_COMPANIES, scan_recruitee),
+    ):
+        for token in _split_env_list(env_name, defaults):
+            diagnostics["sources_checked"] += 1
+            try:
+                scanned = scanner(token)
+                jobs.extend(scanned)
+                diagnostics["sources_succeeded"] += 1
+                diagnostics["source_counts"].append(
+                    {"source": source_name, "token": token, "jobs": len(scanned)}
+                )
+            except Exception as exc:
+                if len(diagnostics["source_errors"]) < 8:
+                    diagnostics["source_errors"].append(_redact_secrets(f"{source_name}:{token}:{exc}"))
+                continue
+
+    # 3) Aggregator APIs (query-based) — cover LinkedIn/Indeed/Glassdoor/etc. and the
+    # wider web via legitimate middle-layer APIs. Each is skipped unless configured.
+    job_location = os.getenv("JOB_LOCATION", "").strip()
+    aggregator_sources = [
+        ("jsearch", lambda: scan_jsearch(query, location=job_location)),
+        ("google_jobs", lambda: scan_serpapi_google_jobs(query, location=job_location)),
+    ]
+    for feed in _split_env_list("LIVE_RSS_FEEDS", []):
+        aggregator_sources.append((f"rss:{feed[:40]}", (lambda f=feed: scan_rss(f))))
+    for source_name, runner in aggregator_sources:
+        diagnostics["sources_checked"] += 1
+        try:
+            scanned = _cached_aggregator_scan(f"{source_name}|{query}|{job_location}", runner)
+        except Exception as exc:
+            if len(diagnostics["source_errors"]) < 8:
+                diagnostics["source_errors"].append(_redact_secrets(f"{source_name}:{exc}"))
+            continue
+        diagnostics["sources_succeeded"] += 1
+        if not scanned:
+            continue
+        jobs.extend(scanned)
+        diagnostics["source_counts"].append(
+            {"source": source_name.split(":")[0], "token": "aggregator", "jobs": len(scanned)}
+        )
 
     jobs = _dedupe_jobs(jobs)
     matched = [j for j in jobs if _text_matches_query(j, query)]
@@ -694,6 +826,7 @@ def _results_to_cards(results: list[MatchResult], min_score: float) -> list[dict
                 "location": result.job.location,
                 "url": result.job.url,
                 "source": result.job.source,
+                "apply_type": result.job.apply_type,
                 "rag_score": round(result.rag_score * 5.0, 2),
                 "final_score": round(result.final_score * 5.0, 2),
                 "ats_score": ats_score,

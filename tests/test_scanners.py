@@ -27,6 +27,83 @@ def test_normalize_job_defaults():
     assert job.source == "ashby"
 
 
+def test_smartrecruiters_parse(monkeypatch):
+    payload = {
+        "content": [
+            {
+                "id": "abc123",
+                "name": "Software Engineer",
+                "company": {"name": "Acme"},
+                "location": {"city": "New York", "country": "US", "remote": True},
+                "releasedDate": "2024-01-01T00:00:00Z",
+            }
+        ]
+    }
+    monkeypatch.setattr(scanners, "_get_json", lambda url: payload)
+    jobs = scanners.scan_smartrecruiters("acme")
+    assert len(jobs) == 1
+    j = jobs[0]
+    assert j.title == "Software Engineer"
+    assert j.source == "smartrecruiters"
+    assert "jobs.smartrecruiters.com/acme/abc123" in j.url
+    assert "New York" in j.location
+
+
+def test_ats_scanners_set_external_ats_apply_type(monkeypatch):
+    # The dedup ranking relies on direct ATS listings being tagged external_ats;
+    # every ATS scanner must set it (default "unknown" would let LinkedIn dupes win).
+    monkeypatch.setattr(scanners, "_get_json", lambda url: {
+        "jobs": [{"title": "Eng", "absolute_url": "https://boards.greenhouse.io/acme/1", "location": {"name": "NYC"}}],
+    })
+    assert scanners.scan_greenhouse("acme")[0].apply_type == "external_ats"
+
+    monkeypatch.setattr(scanners, "_get_json", lambda url: [
+        {"text": "Eng", "hostedUrl": "https://jobs.lever.co/acme/1", "categories": {"location": "NYC"}},
+    ])
+    assert scanners.scan_lever("acme")[0].apply_type == "external_ats"
+
+    monkeypatch.setattr(scanners, "_get_json", lambda url: {
+        "jobs": [{"title": "Eng", "jobUrl": "https://jobs.ashbyhq.com/acme/1", "location": "NYC"}],
+    })
+    assert scanners.scan_ashby("acme")[0].apply_type == "external_ats"
+
+    monkeypatch.setattr(scanners, "_get_json", lambda url: {
+        "content": [{"id": "1", "name": "Eng", "company": {"name": "Acme"}, "location": {"city": "NYC"}}],
+    })
+    assert scanners.scan_smartrecruiters("acme")[0].apply_type == "external_ats"
+
+    monkeypatch.setattr(scanners, "_get_json", lambda url: {
+        "offers": [{"id": 1, "title": "Eng", "location": "NYC", "careers_url": "https://acme.recruitee.com/o/eng"}],
+    })
+    assert scanners.scan_recruitee("acme")[0].apply_type == "external_ats"
+
+
+def test_recruitee_parse(monkeypatch):
+    payload = {
+        "offers": [
+            {
+                "id": 1,
+                "title": "Backend Engineer",
+                "location": "Berlin",
+                "careers_url": "https://acme.recruitee.com/o/backend-engineer",
+                "created_at": "2024-01-01",
+            }
+        ]
+    }
+    monkeypatch.setattr(scanners, "_get_json", lambda url: payload)
+    jobs = scanners.scan_recruitee("acme")
+    assert len(jobs) == 1
+    assert jobs[0].title == "Backend Engineer"
+    assert jobs[0].source == "recruitee"
+    assert jobs[0].url.endswith("/o/backend-engineer")
+
+
 def test_scan_functions_exist():
-    for name in ("scan_greenhouse", "scan_lever", "scan_ashby"):
+    for name in (
+        "scan_greenhouse",
+        "scan_lever",
+        "scan_ashby",
+        "scan_smartrecruiters",
+        "scan_recruitee",
+    ):
         assert hasattr(scanners, name)
