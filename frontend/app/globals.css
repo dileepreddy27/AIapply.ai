@@ -1729,3 +1729,196 @@ button:disabled {
 :root[data-mode="dark"] .lp-price.featured { color: #0a0a0a; }
 :root[data-mode="dark"] .lp-price.featured .lp-body { color: rgba(0, 0, 0, 0.7); }
 :root[data-mode="dark"] .lp-price.featured .lp-price-amt span { color: rgba(0, 0, 0, 0.6); }
+
+/* =====================================================================
+   Tsenta-style dashboard home
+   ===================================================================== */
+/* Top bar */
+.tsenta-topbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.topbar-title { font-size: 1.4rem; margin: 0; font-weight: 800; color: #0a0a0a; }
+.app-shell .topbar-search {
+  flex: 1;
+  max-width: 620px;
+  border-radius: 999px;
+  padding: 10px 16px;
+  background: #f2f2f0;
+  border: 1px solid #e5e5e5;
+  color: #0a0a0a;
+}
+.topbar-icons { display: flex; gap: 8px; margin-left: auto; }
+.app-shell .icon-btn {
+  position: relative;
+  background: transparent;
+  color: #333;
+  border: 1px solid #e5e5e5;
+  border-radius: 999px;
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  font-size: 15px;
+  cursor: pointer;
+  padding: 0;
+}
+.icon-dot {
+  position: absolute;
+  top: 8px;
+  right: 9px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ef4444;
+}
+
+/* Sidebar nav badges + specificity re-assert */
+.app-shell .sidebar-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: #fff;
+  color: #333;
+  border: 1px solid #ececec;
+  font-weight: 600;
+}
+.app-shell .sidebar-link:hover { border-color: #cfcfcf; background: #f6f6f5; }
+.app-shell .sidebar-link.active { background: #0a0a0a; color: #fff; border-color: #0a0a0a; }
+.nav-badge {
+  background: #0a0a0a;
+  color: #fff;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 8px;
+  min-width: 20px;
+  text-align: center;
+}
+.sidebar-link.active .nav-badge { background: #fff; color: #0a0a0a; }
+.sidebar-plan-card button { width: 100%; margin-top: 10px; }
+
+/* Home layout */
+.tsenta-home { display: grid; gap: 14px; }
+.tsenta-home .card-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.tsenta-home h3 { margin: 0; font-size: 1.05rem; font-weight: 800; color: #0a0a0a; }
+.applications-head { margin-top: 10px; }
+
+/* Match cards */
+.match-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+.match-card {
+  border-radius: 16px;
+  padding: 16px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 128px;
+}
+.match-card.tint-0 { background: #fbf3d9; }
+.match-card.tint-1 { background: #d9f2e4; }
+.match-card.tint-2 { background: #e6e4fb; }
+.match-card.tint-3 { background: #fbe0e0; }
+.match-card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.match-company { margin: 0 0 2px; font-size: 12px; color: #555; }
+.match-card h4 { margin: 0; font-size: 15px; font-weight: 700; color: #0a0a0a; line-height: 1.25; }
+.match-ring {
+  position: relative;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+.match-ring::before {
+  content: "";
+  position: absolute;
+  inset: 5px;
+  background: #fff;
+  border-radius: 50%;
+}
+.match-ring-label { position: relative; font-size: 11px; font-weight: 800; color: #0a0a0a; }
+.match-card-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 14px; }
+.match-source { font-size: 12px; color: #666; text-transform: capitalize; }
+.app-shell .match-card button {
+  background: #0a0a0a;
+  color: #fff;
+  border-radius: 999px;
+  padding: 7px 18px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* Filter tabs */
+.app-filter-tabs { display: flex; gap: 8px; flex-wrap: wrap; }
+.app-shell .app-tab {
+  background: #fff;
+  color: #444;
+  border: 1px solid #e5e5e5;
+  border-radius: 999px;
+  padding: 6px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.app-shell .app-tab.active { background: #0a0a0a; color: #fff; border-color: #0a0a0a; }
+
+/* Applications table */
+.app-table-wrap {
+  border: 1px solid #ececec;
+  border-radius: 14px;
+  overflow-x: auto;
+  background: #fff;
+}
+.app-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.app-table thead th {
+  text-align: left;
+  padding: 12px 16px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #8a8a8a;
+  border-bottom: 1px solid #ececec;
+  font-weight: 700;
+}
+.app-table tbody td { padding: 12px 16px; border-bottom: 1px solid #f2f2f2; color: #333; vertical-align: middle; }
+.app-table tbody tr:last-child td { border-bottom: 0; }
+.app-table td strong { display: block; color: #0a0a0a; font-weight: 700; }
+.app-role { display: block; font-size: 12px; color: #888; }
+.app-shell .status-select {
+  border: 1px solid #e5e5e5;
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-size: 12px;
+  background: #fff;
+  color: #333;
+  text-transform: capitalize;
+}
+.app-applied { white-space: nowrap; color: #888; font-size: 13px; }
+.app-shell .app-open {
+  margin-left: 10px;
+  padding: 4px 12px;
+  font-size: 12px;
+  border-radius: 999px;
+}
+
+@media (max-width: 1024px) {
+  .match-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .match-grid { grid-template-columns: 1fr; }
+  .tsenta-topbar { flex-wrap: wrap; }
+  .app-shell .topbar-search { order: 3; max-width: none; width: 100%; }
+}
