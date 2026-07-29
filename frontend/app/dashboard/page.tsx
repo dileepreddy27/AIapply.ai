@@ -1877,10 +1877,21 @@ export default function DashboardPage() {
             <strong>{applicationsCount}</strong>
             <span>{queuePendingCount} waiting review · {queueReadyCount} ready</span>
           </article>
-          <article className="metric-card">
+          <article
+            className="metric-card metric-card-clickable"
+            role="button"
+            tabIndex={0}
+            onClick={() => setActiveStep("bookmarks")}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                setActiveStep("bookmarks");
+              }
+            }}
+          >
             <p className="metric-label">Bookmarks</p>
             <strong>{bookmarks.length}</strong>
-            <span>Saved company targets for later review</span>
+            <span>Saved company targets · click to manage</span>
           </article>
         </section>
 

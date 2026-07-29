@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 from .apply_bot import (
     MANUAL_ONLY_DOMAINS,
@@ -35,16 +35,32 @@ from .apply_bot import (
 
 
 def route_adapter(url: str) -> str:
-    host = urlparse(url or "").netloc.lower()
-    if "greenhouse.io" in host:
-        return "greenhouse"
-    if "lever.co" in host:
-        return "lever"
-    if "myworkdayjobs" in host or "workday" in host:
-        return "workday"
-    if any(d in host for d in MANUAL_ONLY_DOMAINS):
+    # Match on the full lowercased URL string, not just urlparse().netloc: a
+    # scheme-malformed apply_url (e.g. "http:www.linkedin.com/..") has an empty
+    # netloc, which would fail OPEN to the submitting "generic" adapter and bypass
+    # both the manual_only gate and the Workday never-submit guard. Classifying on
+    # the whole string fails safe (toward manual/workday) and matches
+    # aggregators.classify_application_route.
+    link = (url or "").lower()
+    if any(d in link for d in MANUAL_ONLY_DOMAINS):
         return "manual"
+    if "greenhouse.io" in link:
+        return "greenhouse"
+    if "lever.co" in link:
+        return "lever"
+    if "myworkdayjobs" in link or "workday" in link:
+        return "workday"
     return "generic"
+
+
+def _lever_apply_url(url: str) -> str:
+    """Ensure a Lever posting URL points at its /apply form, operating on the parsed
+    PATH so query strings/fragments (e.g. ?lever-source=...) are preserved."""
+    parts = urlparse(url)
+    path = parts.path.rstrip("/")
+    if path.endswith("/apply"):
+        return url
+    return urlunparse(parts._replace(path=path + "/apply"))
 
 
 def _safe_fill(page: Any, selector: str, value: str) -> bool:
@@ -165,8 +181,11 @@ def apply_one(
     try:
         from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-        if adapter == "lever" and not url.rstrip("/").endswith("/apply"):
-            url = url.rstrip("/") + "/apply"
+        if adapter == "lever":
+            # Append "/apply" to the PATH only — appending to the raw URL string
+            # would corrupt Lever links that carry a query string/fragment
+            # (e.g. ?lever-source=...), pushing "/apply" inside the query.
+            url = _lever_apply_url(url)
         try:
             page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
         except PlaywrightTimeoutError:

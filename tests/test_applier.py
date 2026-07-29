@@ -63,6 +63,26 @@ def test_route_adapter():
     assert applier.route_adapter("https://careers.acme.com/apply") == "generic"
 
 
+def test_route_adapter_scheme_malformed_fails_safe():
+    # A scheme-malformed URL (empty urlparse().netloc) must NOT fall open to the
+    # submitting "generic" adapter — LinkedIn/Indeed stay manual, Workday stays workday.
+    assert applier.route_adapter("http:www.linkedin.com/jobs/view/1") == "manual"
+    assert applier.route_adapter("https:www.indeed.com/viewjob?jk=1") == "manual"
+    assert applier.route_adapter("https:acme.wd1.myworkdayjobs.com/x") == "workday"
+    assert applier.route_adapter("https:boards.greenhouse.io/acme/jobs/1") == "greenhouse"
+
+
+def test_lever_apply_url_preserves_query():
+    # /apply must be appended to the PATH, not the raw string, so tracking params survive.
+    assert (
+        applier._lever_apply_url("https://jobs.lever.co/acme/abc-123?lever-source=LinkedIn")
+        == "https://jobs.lever.co/acme/abc-123/apply?lever-source=LinkedIn"
+    )
+    # Already-/apply URLs are left untouched (idempotent), trailing slash tolerated.
+    assert applier._lever_apply_url("https://jobs.lever.co/acme/abc-123/apply") == "https://jobs.lever.co/acme/abc-123/apply"
+    assert applier._lever_apply_url("https://jobs.lever.co/acme/abc-123/") == "https://jobs.lever.co/acme/abc-123/apply"
+
+
 def test_split_name():
     assert applier._split_name({"name": "Alex Morgan"}) == ("Alex", "Morgan")
     assert applier._split_name({"name": "Cher"}) == ("Cher", "")

@@ -85,6 +85,78 @@ def test_dedupe_cross_platform_keeps_actionable():
     assert out[0].apply_type == "external_ats"  # the more-actionable listing wins
 
 
+def test_dedupe_keeps_distinct_ats_reqs():
+    # Two genuinely-different reqs at one company can share company+title+location but
+    # have distinct URLs — each is separately applyable and must NOT be collapsed.
+    a = JobPosting(
+        id="a", source="greenhouse", company="Stripe", title="Software Engineer",
+        location="San Francisco, CA", url="https://boards.greenhouse.io/stripe/1",
+        description="JD one", apply_type="external_ats",
+    )
+    b = JobPosting(
+        id="b", source="greenhouse", company="Stripe", title="Software Engineer",
+        location="San Francisco, CA", url="https://boards.greenhouse.io/stripe/2",
+        description="JD two", apply_type="external_ats",
+    )
+    out = api._dedupe_jobs([a, b])
+    assert len(out) == 2
+    assert {j.url for j in out} == {a.url, b.url}
+
+
+def test_dedupe_ats_survives_regardless_of_order():
+    # Even when the aggregator listing is encountered first, the ATS listing must win
+    # (the fix must not depend on _rank ordering between direct and aggregator).
+    linkedin = JobPosting(
+        id="l", source="linkedin", company="Ramp", title="Engineer", location="(Remote)",
+        url="https://linkedin.com/jobs/9", description="desc", apply_type="linkedin_easy_apply",
+    )
+    ats = JobPosting(
+        id="g", source="ashby", company="Ramp", title="Engineer", location="(Remote)",
+        url="https://jobs.ashbyhq.com/ramp/9", description="", apply_type="external_ats",
+    )
+    out = api._dedupe_jobs([linkedin, ats])
+    assert len(out) == 1
+    assert out[0].apply_type == "external_ats"
+
+
+def test_redact_secrets_strips_api_key(monkeypatch):
+    monkeypatch.setenv("SERPAPI_KEY", "sk-super-secret-123")
+    msg = "google_jobs:401 Client Error for url: https://serpapi.com/search.json?api_key=sk-super-secret-123"
+    redacted = api._redact_secrets(msg)
+    assert "sk-super-secret-123" not in redacted
+    assert "***" in redacted
+
+
+def test_aggregator_cache_serves_within_ttl(monkeypatch):
+    monkeypatch.setenv("AGGREGATOR_CACHE_TTL", "900")
+    api._AGG_CACHE.clear()
+    calls = {"n": 0}
+
+    def runner():
+        calls["n"] += 1
+        return ["job"]
+
+    key = "jsearch|engineer|United States"
+    assert api._cached_aggregator_scan(key, runner) == ["job"]
+    assert api._cached_aggregator_scan(key, runner) == ["job"]
+    assert calls["n"] == 1  # second call served from cache, no second billable request
+    api._AGG_CACHE.clear()
+
+
+def test_aggregator_cache_does_not_store_on_error(monkeypatch):
+    monkeypatch.setenv("AGGREGATOR_CACHE_TTL", "900")
+    api._AGG_CACHE.clear()
+
+    def boom():
+        raise RuntimeError("429")
+
+    import pytest
+
+    with pytest.raises(RuntimeError):
+        api._cached_aggregator_scan("k", boom)
+    assert "k" not in api._AGG_CACHE
+
+
 def test_allowed_statuses_include_pipeline_stages():
     for s in ("viewed", "applied", "replied", "interviewing", "withdrawn"):
         assert s in api.ALLOWED_APPLICATION_STATUSES

@@ -101,11 +101,16 @@ def fetch_applier_queue(
     seen: set[str] = set()
     out: list[dict[str, Any]] = []
     for page in range(1, max(1, min(pages, 5)) + 1):
-        data = _get_json(
-            f"https://{host}/search",
-            headers={"X-RapidAPI-Key": api_key, "X-RapidAPI-Host": host},
-            params={"query": q, "page": str(page), "num_pages": "1", "date_posted": date_posted},
-        )
+        try:
+            data = _get_json(
+                f"https://{host}/search",
+                headers={"X-RapidAPI-Key": api_key, "X-RapidAPI-Host": host},
+                params={"query": q, "page": str(page), "num_pages": "1", "date_posted": date_posted},
+            )
+        except Exception:
+            # A later page failing (e.g. JSearch 429 rate-limit) must not discard the
+            # pages already fetched — stop paginating and return the partial queue.
+            break
         for job in (data.get("data", []) if isinstance(data, dict) else []):
             if not isinstance(job, dict):
                 continue
@@ -284,8 +289,17 @@ def scan_rss(feed_url: str, source_label: str = "rss") -> list[JobPosting]:
             if name == "title":
                 title = (child.text or "").strip()
             elif name == "link":
-                # RSS: text; Atom: href attribute
-                link = (child.text or "").strip() or child.attrib.get("href", "").strip()
+                # RSS: text; Atom: href attribute. Atom entries may carry several
+                # <link>s (alternate/self/enclosure); the job page is rel="alternate"
+                # (or the default when rel is omitted). Don't let a later self/edit
+                # link overwrite the alternate — otherwise the applier navigates to
+                # an API/self URL instead of the posting.
+                href = (child.text or "").strip() or child.attrib.get("href", "").strip()
+                if not href:
+                    continue
+                rel = child.attrib.get("rel", "").strip().lower()
+                if rel in ("", "alternate") or not link:
+                    link = href
             elif name in {"description", "summary", "content"}:
                 desc = (child.text or "").strip()
             elif name in {"pubDate", "published", "updated"} and not posted:

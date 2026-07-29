@@ -86,3 +86,56 @@ def test_rss_parse(monkeypatch):
     assert jobs[0].title == "Backend Engineer"
     assert jobs[0].url == "https://niche.example.com/jobs/9"
     assert jobs[0].source == "niche"
+
+
+def test_rss_atom_prefers_alternate_over_self(monkeypatch):
+    # Atom entries can carry several <link>s; a trailing rel="self" (API URL) must NOT
+    # overwrite the rel="alternate" job page.
+    xml = b"""<?xml version='1.0'?>
+    <feed xmlns='http://www.w3.org/2005/Atom'>
+      <entry>
+        <title>Platform Engineer</title>
+        <link rel='alternate' href='https://board.example.com/jobs/42'/>
+        <link rel='self' href='https://board.example.com/api/entries/42'/>
+        <summary>Own the platform</summary>
+        <updated>2024-03-01T00:00:00Z</updated>
+      </entry>
+    </feed>"""
+
+    class FakeResp:
+        content = xml
+        def raise_for_status(self):
+            return None
+
+    monkeypatch.setattr(agg.requests, "get", lambda *a, **k: FakeResp())
+    jobs = agg.scan_rss("https://board.example.com/atom.xml", source_label="board")
+    assert len(jobs) == 1
+    assert jobs[0].url == "https://board.example.com/jobs/42"  # alternate, not self
+
+
+def test_fetch_applier_queue_returns_partial_on_later_page_error(monkeypatch):
+    monkeypatch.setenv("RAPIDAPI_KEY", "k")
+    page1 = {
+        "data": [
+            {
+                "employer_name": "Acme",
+                "job_title": "Backend Engineer",
+                "job_apply_link": "https://jobs.lever.co/acme/1",
+                "job_city": "Austin",
+                "job_state": "TX",
+            }
+        ]
+    }
+    calls = {"n": 0}
+
+    def fake_get_json(url, headers=None, params=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return page1
+        raise RuntimeError("429 rate limited")
+
+    monkeypatch.setattr(agg, "_get_json", fake_get_json)
+    # pages=3, but page 2 errors -> we keep page 1's jobs instead of crashing.
+    q = agg.fetch_applier_queue("backend engineer", pages=3, location="United States")
+    assert len(q) == 1
+    assert q[0]["company"] == "Acme"

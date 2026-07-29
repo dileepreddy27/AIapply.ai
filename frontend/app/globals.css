@@ -328,6 +328,19 @@ button:disabled {
   box-shadow: 0 18px 40px rgba(0, 0, 0, 0.22);
 }
 
+.metric-card-clickable {
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.metric-card-clickable:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 22px 46px rgba(0, 0, 0, 0.28);
+}
+.metric-card-clickable:focus-visible {
+  outline: 2px solid #7dd5bf;
+  outline-offset: 2px;
+}
+
 .metric-card strong {
   display: block;
   margin: 0.3rem 0;
@@ -1974,6 +1987,15 @@ button:disabled {
 }
 .app-shell .tsenta-sidebar .sidebar-link:hover { background: #f3f3f1; }
 .app-shell .tsenta-sidebar .sidebar-link.active { background: #f0f0ee; color: #0a0a0a; }
+/* Black & White theme: the light-mode sidebar-link colors above (specificity 0,3,0)
+   would otherwise beat the generic bw override by source order, rendering nav + logo
+   dark-on-black. These higher-specificity rules restore contrast. */
+:root[data-theme="bw"] .app-shell .tsenta-sidebar .sidebar-link { color: #fff; }
+:root[data-theme="bw"] .app-shell .tsenta-sidebar .sidebar-link:hover { background: #1a1a1a; }
+:root[data-theme="bw"] .app-shell .tsenta-sidebar .sidebar-link.active { background: #fff; color: #000; }
+:root[data-theme="bw"] .sidebar-logo-word { color: #fff; }
+:root[data-theme="bw"] .sidebar-logo-mark { background: #fff; color: #000; }
+:root[data-theme="bw"] .tsenta-sidebar .nav-badge { background: #fff; color: #000; }
 .tsenta-sidebar .nav-ico { width: 18px; text-align: center; opacity: 0.7; font-size: 14px; }
 .tsenta-sidebar .nav-text { flex: 1; }
 .tsenta-sidebar .nav-badge {
