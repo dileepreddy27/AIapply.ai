@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
+import ThemeToggle from "../theme-toggle";
 
 type MatchResult = {
   title: string;
@@ -1622,10 +1623,10 @@ export default function DashboardPage() {
   return (
     <main className="app-shell">
       <aside className="dashboard-sidebar tsenta-sidebar">
-        <div className="sidebar-brand">
+        <a className="sidebar-brand" href="/dashboard" title="Refresh AIapply.ai">
           <span className="sidebar-logo-mark">A</span>
           <span className="sidebar-logo-word">AIapply.ai</span>
-        </div>
+        </a>
 
         <p className="sidebar-section-label">Dashboard</p>
         <nav className="sidebar-nav" aria-label="Dashboard sections">
@@ -1719,6 +1720,7 @@ export default function DashboardPage() {
             <span className="topbar-search-spacer" />
           )}
           <div className="topbar-icons">
+            <ThemeToggle />
             <button
               type="button"
               className="icon-btn"

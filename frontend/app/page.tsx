@@ -135,58 +135,25 @@ const FAQS = [
 export default function HomePage() {
   const [stage, setStage] = useState<Stage>("find");
   const [openFaq, setOpenFaq] = useState<number | null>(0);
-  const [dark, setDark] = useState(false);
   const active = STAGES.find((s) => s.key === stage)!;
 
   useEffect(() => {
-    // Flag the landing so the global B&W toggle hides here, and apply saved mode.
-    document.documentElement.classList.add("on-landing");
-    let saved: string | null = null;
-    try {
-      saved = window.localStorage.getItem("aiapply-mode");
-    } catch {
-      saved = null;
-    }
-    const isDark = saved === "dark";
-    setDark(isDark);
-    document.documentElement.setAttribute("data-mode", isDark ? "dark" : "light");
-    return () => {
-      document.documentElement.classList.remove("on-landing");
-    };
+    // The landing page is always light; the theme toggle lives in the dashboard.
+    document.documentElement.removeAttribute("data-mode");
+    document.documentElement.setAttribute("data-theme", "default");
   }, []);
-
-  function toggleMode() {
-    const next = dark ? "light" : "dark";
-    setDark(!dark);
-    document.documentElement.setAttribute("data-mode", next);
-    try {
-      window.localStorage.setItem("aiapply-mode", next);
-    } catch {
-      /* ignore */
-    }
-  }
 
   return (
     <main className="landing">
       <header className="lp-nav">
         <div className="lp-nav-inner">
-          <span className="lp-logo">AIapply.ai</span>
+          <a className="lp-logo" href="/">AIapply.ai</a>
           <nav className="lp-links">
             <a href="#how">How it works</a>
             <a href="#pricing">Pricing</a>
             <a href="#faq">FAQ</a>
           </nav>
           <div className="lp-nav-cta">
-            <button
-              type="button"
-              className="lp-mode-btn"
-              onClick={toggleMode}
-              aria-pressed={dark}
-              aria-label={dark ? "Switch to light mode" : "Switch to dark mode"}
-              title={dark ? "Light mode" : "Dark mode"}
-            >
-              {dark ? "☀︎ Light" : "☾ Dark"}
-            </button>
             <Link href="/login" className="lp-btn ghost">Log in</Link>
             <Link href="/login" className="lp-btn solid">Sign up</Link>
           </div>
@@ -330,7 +297,7 @@ export default function HomePage() {
 
       <footer className="lp-footer">
         <div className="lp-footer-top">
-          <span className="lp-logo">AIapply.ai</span>
+          <a className="lp-logo" href="/">AIapply.ai</a>
           <nav className="lp-links">
             <a href="#how">How it works</a>
             <a href="#pricing">Pricing</a>
