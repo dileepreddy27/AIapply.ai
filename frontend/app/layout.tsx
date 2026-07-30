@@ -1,14 +1,14 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import ThemeToggle from "./theme-toggle";
 
 export const metadata: Metadata = {
   title: "AIapply.ai",
   description: "Role-based job matching with resume RAG, auth, and payments"
 };
 
-// Applies the saved theme before paint to avoid a flash of the default theme.
-const themeInitScript = `(function(){try{var d=document.documentElement;var t=localStorage.getItem('aiapply-theme');if(t==='bw'){d.setAttribute('data-theme','bw');}var m=localStorage.getItem('aiapply-mode');d.setAttribute('data-mode',m==='dark'?'dark':'light');}catch(e){}})();`;
+// Restore the saved theme before paint to avoid a flash of the default theme.
+// The theme toggle now lives inside the dashboard (post-login) only.
+const themeInitScript = `(function(){try{var d=document.documentElement;if(localStorage.getItem('aiapply-theme')==='bw'){d.setAttribute('data-theme','bw');}}catch(e){}})();`;
 
 export default function RootLayout({
   children
@@ -20,10 +20,7 @@ export default function RootLayout({
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>
-      <body>
-        <ThemeToggle />
-        {children}
-      </body>
+      <body>{children}</body>
     </html>
   );
 }
